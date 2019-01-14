@@ -41,12 +41,15 @@ import com.hazelcast.core.LifecycleService;
 import com.hazelcast.core.MultiMap;
 import com.hazelcast.core.PartitionService;
 import com.hazelcast.core.ReplicatedMap;
+import com.hazelcast.crdt.pncounter.PNCounter;
 import com.hazelcast.durableexecutor.DurableExecutorService;
+import com.hazelcast.flakeidgen.FlakeIdGenerator;
 import com.hazelcast.logging.LoggingService;
 import com.hazelcast.mapreduce.JobTracker;
 import com.hazelcast.osgi.HazelcastOSGiInstance;
 import com.hazelcast.quorum.QuorumService;
 import com.hazelcast.ringbuffer.Ringbuffer;
+import com.hazelcast.scheduledexecutor.IScheduledExecutorService;
 import com.hazelcast.transaction.HazelcastXAResource;
 import com.hazelcast.transaction.TransactionContext;
 import com.hazelcast.transaction.TransactionException;
@@ -143,6 +146,16 @@ class HazelcastOSGiClientInstanceImpl
     }
 
     @Override
+    public PNCounter getPNCounter(String name) {
+        return delegatedInstance.getPNCounter(name);
+    }
+
+    @Override
+    public IScheduledExecutorService getScheduledExecutorService(String name) {
+        return delegatedInstance.getScheduledExecutorService(name);
+    }
+
+    @Override
     public Cluster getCluster() {
         return delegatedInstance.getCluster();
     }
@@ -185,6 +198,11 @@ class HazelcastOSGiClientInstanceImpl
     @Override
     public IdGenerator getIdGenerator(String name) {
         return delegatedInstance.getIdGenerator(name);
+    }
+
+    @Override
+    public FlakeIdGenerator getFlakeIdGenerator(String name) {
+        return delegatedInstance.getFlakeIdGenerator(name);
     }
 
     @Override
