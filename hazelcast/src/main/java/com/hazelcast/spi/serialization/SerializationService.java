@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public interface SerializationService {
      * If this method is called with null, null is returned.
      *
      * @param obj      the object to serialize.
-     * @param strategy strategy is used to calculate partition id of the resulting data see {@link PartitioningStrategy}
+     * @param strategy strategy is used to calculate partition ID of the resulting data see {@link PartitioningStrategy}
      * @return the serialized object.
      * @throws com.hazelcast.nio.serialization.HazelcastSerializationException when serialization fails.
      */
@@ -66,6 +66,21 @@ public interface SerializationService {
      * @throws com.hazelcast.nio.serialization.HazelcastSerializationException when deserialization fails.
      */
     <T> T toObject(Object data);
+
+    /**
+     * Deserializes an object.
+     * <p/>
+     * This method can safely be called on an object that is already deserialized. In that case, that instance
+     * is returned.
+     * <p/>
+     * If this method is called with null, null is returned.
+     *
+     * @param data  the data to deserialize.
+     * @param klazz The class to instantiate when deserializing the object.
+     * @return the deserialized object.
+     * @throws com.hazelcast.nio.serialization.HazelcastSerializationException when deserialization fails.
+     */
+    <T> T toObject(Object data, Class klazz);
 
     /**
      * see {@link com.hazelcast.config.Config#setManagedContext(ManagedContext)}

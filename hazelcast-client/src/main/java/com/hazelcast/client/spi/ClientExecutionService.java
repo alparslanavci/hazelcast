@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,39 +16,24 @@
 
 package com.hazelcast.client.spi;
 
-import com.hazelcast.core.ICompletableFuture;
+import com.hazelcast.spi.TaskScheduler;
 
 import java.util.concurrent.Callable;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Executor service for Hazelcast clients.
- *
+ * <p>
  * Allows asynchronous execution and scheduling of {@link Runnable} and {@link Callable} commands.
+ * <p>
+ * Any schedule submit or execute operation runs on internal executors.
+ * When user code needs to run getUserExecutor() should be utilized
  */
-public interface ClientExecutionService extends Executor {
-
-    /**
-     * Execute alien (user code) on execution service
-     *
-     * @param command to run
-     */
-    @Override
-    void execute(Runnable command);
-
-    ICompletableFuture<?> submit(Runnable task);
-
-    <T> ICompletableFuture<T> submit(Callable<T> task);
-
-    ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit);
-
-    ScheduledFuture<?> scheduleWithRepetition(Runnable command, long initialDelay, long period, TimeUnit unit);
+public interface ClientExecutionService extends TaskScheduler {
 
     /**
      * @return executorService that alien (user code) runs on
      */
-    ExecutorService getAsyncExecutor();
+    ExecutorService getUserExecutor();
+
 }

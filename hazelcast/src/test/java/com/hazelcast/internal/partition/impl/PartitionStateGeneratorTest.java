@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -12,7 +12,6 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
  */
 
 package com.hazelcast.internal.partition.impl;
@@ -22,6 +21,7 @@ import com.hazelcast.config.Config;
 import com.hazelcast.config.MemberGroupConfig;
 import com.hazelcast.config.PartitionGroupConfig;
 import com.hazelcast.core.Member;
+import com.hazelcast.instance.BuildInfoProvider;
 import com.hazelcast.instance.MemberImpl;
 import com.hazelcast.internal.partition.InternalPartition;
 import com.hazelcast.internal.partition.PartitionStateGenerator;
@@ -35,12 +35,14 @@ import com.hazelcast.partition.membergroup.SingleMemberGroupFactory;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelTest;
 import com.hazelcast.test.annotation.QuickTest;
+import com.hazelcast.version.MemberVersion;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
 import java.net.InetAddress;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -60,6 +62,7 @@ import static org.junit.Assert.assertTrue;
 @Category({QuickTest.class, ParallelTest.class})
 public class PartitionStateGeneratorTest {
 
+    private static final MemberVersion VERSION = MemberVersion.of(BuildInfoProvider.getBuildInfo().getVersion());
     private static final boolean PRINT_STATE = false;
 
     @Test
@@ -156,9 +159,54 @@ public class PartitionStateGeneratorTest {
     public void testXmlPartitionGroupConfig() {
         Config config = new ClasspathXmlConfig("hazelcast-fullconfig.xml");
         PartitionGroupConfig partitionGroupConfig = config.getPartitionGroupConfig();
-        assertFalse(partitionGroupConfig.isEnabled());
+        assertTrue(partitionGroupConfig.isEnabled());
         assertEquals(PartitionGroupConfig.MemberGroupType.CUSTOM, partitionGroupConfig.getGroupType());
         assertEquals(2, partitionGroupConfig.getMemberGroupConfigs().size());
+    }
+
+    @Test
+    public void testOnlyUnassignedArrangement() throws Exception {
+        List<Member> memberList = createMembers(10, 1);
+        MemberGroupFactory memberGroupFactory = new SingleMemberGroupFactory();
+        Collection<MemberGroup> groups = memberGroupFactory.createMemberGroups(memberList);
+
+        PartitionStateGenerator generator = new PartitionStateGeneratorImpl();
+        Address[][] state = generator.arrange(groups, emptyPartitionArray(100));
+
+        // unassign some partitions entirely
+        Collection<Integer> unassignedPartitions = new ArrayList<Integer>();
+        for (int i = 0; i < state.length; i++) {
+            if (i % 3 == 0) {
+                state[i] = new Address[InternalPartition.MAX_REPLICA_COUNT];
+                unassignedPartitions.add(i);
+            }
+        }
+
+        // unassign only backup replicas of some partitions
+        for (int i = 0; i < state.length; i++) {
+            if (i % 10 == 0) {
+                Arrays.fill(state[i], 1, InternalPartition.MAX_REPLICA_COUNT, null);
+            }
+        }
+
+        InternalPartition[] partitions = toPartitionArray(state);
+
+        state = generator.arrange(groups, partitions, unassignedPartitions);
+
+        for (int pid = 0; pid < state.length; pid++) {
+            Address[] addresses = state[pid];
+
+            if (unassignedPartitions.contains(pid)) {
+                for (Address address : addresses) {
+                    assertNotNull(address);
+                }
+            } else {
+                InternalPartition partition = partitions[pid];
+                for (int replicaIx = 0; replicaIx < InternalPartition.MAX_REPLICA_COUNT; replicaIx++) {
+                    assertEquals(partition.getReplicaAddress(replicaIx), addresses[replicaIx]);
+                }
+            }
+        }
     }
 
     private void test(MemberGroupFactory memberGroupFactory) throws Exception {
@@ -262,7 +310,7 @@ public class PartitionStateGeneratorTest {
             count++;
             port++;
             MemberImpl m = new MemberImpl(new Address(InetAddress.getByAddress(new byte[]{ip[0], ip[1], ip[2], ip[3]})
-                    , port), false);
+                    , port), VERSION, false);
             members.add(m);
             if ((0xff & ip[3]) == 255) {
                 ip[2] = ++ip[2];
@@ -293,7 +341,7 @@ public class PartitionStateGeneratorTest {
                 set.add(owner);
                 MemberGroup group = null;
                 for (MemberGroup g : groups) {
-                    if (g.hasMember(new MemberImpl(owner, true))) {
+                    if (g.hasMember(new MemberImpl(owner, VERSION, true))) {
                         group = g;
                         break;
                     }
@@ -336,12 +384,12 @@ public class PartitionStateGeneratorTest {
         }
         final float r = 2f;
         assertTrue("Too low partition count! \nOwned: " + count + ", Avg: " + average
-                + ", \nPartitionCount: " + partitionCount + ", Replica: " + replica +
-                ", \nOwner: " + owner, count >= (float) (average) / r);
+                + ", \nPartitionCount: " + partitionCount + ", Replica: " + replica
+                + ", \nOwner: " + owner, count >= (float) (average) / r);
 
         assertTrue("Too high partition count! \nOwned: " + count + ", Avg: " + average
-                + ", \nPartitionCount: " + partitionCount + ", Replica: " + replica +
-                ", \nOwner: " + owner, count <= (float) (average) * r);
+                + ", \nPartitionCount: " + partitionCount + ", Replica: " + replica
+                + ", \nOwner: " + owner, count <= (float) (average) * r);
     }
 
     private static void printTable(Map<MemberGroup, GroupPartitionState> groupPartitionStates, int replicaCount) {

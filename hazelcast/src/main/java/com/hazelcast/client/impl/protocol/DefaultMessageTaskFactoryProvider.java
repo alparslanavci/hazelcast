@@ -1,11 +1,86 @@
+/*
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.hazelcast.client.impl.protocol;
 
+import com.hazelcast.client.impl.protocol.task.AddPartitionListenerMessageTask;
+import com.hazelcast.client.impl.protocol.task.CreateProxiesMessageTask;
+import com.hazelcast.client.impl.protocol.task.DeployClassesMessageTask;
 import com.hazelcast.client.impl.protocol.task.MessageTask;
+import com.hazelcast.client.impl.protocol.task.cache.CacheEventJournalReadTask;
+import com.hazelcast.client.impl.protocol.task.cache.CacheEventJournalSubscribeTask;
+import com.hazelcast.client.impl.protocol.task.cache.Pre38CacheAddInvalidationListenerTask;
 import com.hazelcast.client.impl.protocol.task.cardinality.CardinalityEstimatorAddMessageTask;
 import com.hazelcast.client.impl.protocol.task.cardinality.CardinalityEstimatorEstimateMessageTask;
+import com.hazelcast.client.impl.protocol.task.crdt.pncounter.PNCounterAddMessageTask;
+import com.hazelcast.client.impl.protocol.task.crdt.pncounter.PNCounterGetConfiguredReplicaCountMessageTask;
+import com.hazelcast.client.impl.protocol.task.crdt.pncounter.PNCounterGetMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddCacheConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddCardinalityEstimatorConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddDurableExecutorConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddEventJournalConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddExecutorConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddFlakeIdGeneratorConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddListConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddLockConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddMapConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddMerkleTreeConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddMultiMapConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddQueueConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddReliableTopicConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddReplicatedMapConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddRingbufferConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddScheduledExecutorConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddSemaphoreConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddSetConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddTopicConfigMessageTask;
 import com.hazelcast.client.impl.protocol.task.executorservice.durable.DurableExecutorDisposeResultMessageTask;
 import com.hazelcast.client.impl.protocol.task.executorservice.durable.DurableExecutorRetrieveAndDisposeResultMessageTask;
 import com.hazelcast.client.impl.protocol.task.executorservice.durable.DurableExecutorRetrieveResultMessageTask;
+import com.hazelcast.client.impl.protocol.task.map.MapAggregateMessageTask;
+import com.hazelcast.client.impl.protocol.task.map.MapAggregateWithPredicateMessageTask;
+import com.hazelcast.client.impl.protocol.task.map.MapEventJournalReadTask;
+import com.hazelcast.client.impl.protocol.task.map.MapEventJournalSubscribeTask;
+import com.hazelcast.client.impl.protocol.task.map.MapProjectionMessageTask;
+import com.hazelcast.client.impl.protocol.task.map.MapProjectionWithPredicateMessageTask;
+import com.hazelcast.client.impl.protocol.task.map.MapPutIfAbsentWithMaxIdleMessageTask;
+import com.hazelcast.client.impl.protocol.task.map.MapPutTransientWithMaxIdleMessageTask;
+import com.hazelcast.client.impl.protocol.task.map.MapPutWithMaxIdleMessageTask;
+import com.hazelcast.client.impl.protocol.task.map.MapSetTtlMessageTask;
+import com.hazelcast.client.impl.protocol.task.map.MapSetWithMaxIdleMessageTask;
+import com.hazelcast.client.impl.protocol.task.map.Pre38MapAddNearCacheEntryListenerMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorGetAllScheduledMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorShutdownMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorSubmitToAddressMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorSubmitToPartitionMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskCancelFromAddressMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskCancelFromPartitionMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskDisposeFromAddressMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskDisposeFromPartitionMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskGetDelayFromAddressMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskGetDelayFromPartitionMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskGetResultFromAddressMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskGetResultFromPartitionMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskGetStatisticsFromAddressMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskGetStatisticsFromPartitionMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskIsCancelledFromAddressMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskIsCancelledFromPartitionMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskIsDoneFromAddressMessageTask;
+import com.hazelcast.client.impl.protocol.task.scheduledexecutor.ScheduledExecutorTaskIsDoneFromPartitionMessageTask;
+import com.hazelcast.flakeidgen.impl.client.NewIdBatchMessageTask;
 import com.hazelcast.instance.Node;
 import com.hazelcast.nio.Connection;
 import com.hazelcast.spi.NodeEngine;
@@ -191,6 +266,16 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 return new com.hazelcast.client.impl.protocol.task.cache.CacheClearMessageTask(clientMessage, node, connection);
             }
         };
+        factories[com.hazelcast.client.impl.protocol.codec.CacheAssignAndGetUuidsCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.cache.CacheAssignAndGetUuidsMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.CacheFetchNearCacheInvalidationMetadataCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.cache.CacheFetchNearCacheInvalidationMetadataTask(clientMessage, node, connection);
+            }
+        };
         factories[com.hazelcast.client.impl.protocol.codec.CacheReplaceCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
             public MessageTask create(ClientMessage clientMessage, Connection connection) {
                 return new com.hazelcast.client.impl.protocol.task.cache.CacheReplaceMessageTask(clientMessage, node, connection);
@@ -223,12 +308,23 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
         };
         factories[com.hazelcast.client.impl.protocol.codec.CacheAddInvalidationListenerCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
             public MessageTask create(ClientMessage clientMessage, Connection connection) {
-                return new com.hazelcast.client.impl.protocol.task.cache.CacheAddInvalidationListenerTask(clientMessage, node, connection);
+                return new Pre38CacheAddInvalidationListenerTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.CacheAddNearCacheInvalidationListenerCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.cache.CacheAddNearCacheInvalidationListenerTask(clientMessage, node, connection);
             }
         };
         factories[com.hazelcast.client.impl.protocol.codec.CachePutAllCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
             public MessageTask create(ClientMessage clientMessage, Connection connection) {
                 return new com.hazelcast.client.impl.protocol.task.cache.CachePutAllMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.CacheSetExpiryPolicyCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            @Override
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.cache.CacheSetExpiryPolicyMessageTask(clientMessage, node, connection);
             }
         };
         factories[com.hazelcast.client.impl.protocol.codec.CacheLoadAllCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
@@ -329,6 +425,16 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
         factories[com.hazelcast.client.impl.protocol.codec.CacheIterateEntriesCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
             public MessageTask create(ClientMessage clientMessage, Connection connection) {
                 return new com.hazelcast.client.impl.protocol.task.cache.CacheIterateEntriesMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.CacheEventJournalSubscribeCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new CacheEventJournalSubscribeTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.CacheEventJournalReadCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new CacheEventJournalReadTask<Object, Object, Object>(clientMessage, node, connection);
             }
         };
 
@@ -553,6 +659,11 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
         factories[com.hazelcast.client.impl.protocol.codec.SemaphoreReducePermitsCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
             public MessageTask create(ClientMessage clientMessage, Connection connection) {
                 return new com.hazelcast.client.impl.protocol.task.semaphore.SemaphoreReducePermitsMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.SemaphoreIncreasePermitsCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.semaphore.SemaphoreIncreasePermitsMessageTask(clientMessage,node, connection);
             }
         };
         factories[com.hazelcast.client.impl.protocol.codec.SemaphoreTryAcquireCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
@@ -909,6 +1020,11 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 return new com.hazelcast.client.impl.protocol.task.multimap.MultiMapValuesMessageTask(clientMessage, node, connection);
             }
         };
+        factories[com.hazelcast.client.impl.protocol.codec.MultiMapDeleteCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.multimap.MultiMapDeleteMessageTask(clientMessage, node, connection);
+            }
+        };
 //endregion
 //region ----------  REGISTRATION FOR com.hazelcast.client.impl.protocol.task.atomicreference
         factories[com.hazelcast.client.impl.protocol.codec.AtomicReferenceClearCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
@@ -1225,6 +1341,16 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 return new com.hazelcast.client.impl.protocol.task.map.MapAddEntryListenerMessageTask(clientMessage, node, connection);
             }
         };
+        factories[com.hazelcast.client.impl.protocol.codec.MapAssignAndGetUuidsCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.map.MapAssignAndGetUuidsMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapFetchNearCacheInvalidationMetadataCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.map.MapFetchNearCacheInvalidationMetadataTask(clientMessage, node, connection);
+            }
+        };
         factories[com.hazelcast.client.impl.protocol.codec.MapRemoveIfSameCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
             public MessageTask create(ClientMessage clientMessage, Connection connection) {
                 return new com.hazelcast.client.impl.protocol.task.map.MapRemoveIfSameMessageTask(clientMessage, node, connection);
@@ -1267,7 +1393,12 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
         };
         factories[com.hazelcast.client.impl.protocol.codec.MapAddNearCacheEntryListenerCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
             public MessageTask create(ClientMessage clientMessage, Connection connection) {
-                return new com.hazelcast.client.impl.protocol.task.map.MapAddNearCacheEntryListenerMessageTask(clientMessage, node, connection);
+                return new Pre38MapAddNearCacheEntryListenerMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapAddNearCacheInvalidationListenerCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.map.MapAddNearCacheInvalidationListenerMessageTask(clientMessage, node, connection);
             }
         };
         factories[com.hazelcast.client.impl.protocol.codec.MapExecuteOnAllKeysCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
@@ -1328,6 +1459,11 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
         factories[com.hazelcast.client.impl.protocol.codec.MapExecuteWithPredicateCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
             public MessageTask create(ClientMessage clientMessage, Connection connection) {
                 return new com.hazelcast.client.impl.protocol.task.map.MapExecuteWithPredicateMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapRemoveAllCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.map.MapRemoveAllMessageTask(clientMessage, node, connection);
             }
         };
         factories[com.hazelcast.client.impl.protocol.codec.MapPutIfAbsentCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
@@ -1500,6 +1636,71 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 return new com.hazelcast.client.impl.protocol.task.map.MapFetchEntriesMessageTask(clientMessage, node, connection);
             }
         };
+        factories[com.hazelcast.client.impl.protocol.codec.MapAggregateCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new MapAggregateMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapAggregateWithPredicateCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new MapAggregateWithPredicateMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapProjectCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new MapProjectionMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapProjectWithPredicateCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new MapProjectionWithPredicateMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapFetchWithQueryCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.map.MapFetchWithQueryMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapEventJournalSubscribeCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new MapEventJournalSubscribeTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapEventJournalReadCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new MapEventJournalReadTask<Object, Object, Object>(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapSetTtlCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            @Override
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new MapSetTtlMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapSetWithMaxIdleCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            @Override
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new MapSetWithMaxIdleMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapPutWithMaxIdleCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            @Override
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new MapPutWithMaxIdleMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapPutIfAbsentWithMaxIdleCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            @Override
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new MapPutIfAbsentWithMaxIdleMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.MapPutTransientWithMaxIdleCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            @Override
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new MapPutTransientWithMaxIdleMessageTask(clientMessage, node, connection);
+            }
+        };
 //endregion
 //region ----------  REGISTRATION FOR com.hazelcast.client.impl.protocol.task
         factories[com.hazelcast.client.impl.protocol.codec.ClientAddPartitionLostListenerCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
@@ -1565,6 +1766,26 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
         factories[com.hazelcast.client.impl.protocol.codec.ClientAuthenticationCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
             public MessageTask create(ClientMessage clientMessage, Connection connection) {
                 return new com.hazelcast.client.impl.protocol.task.AuthenticationMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ClientStatisticsCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.ClientStatisticsMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ClientDeployClassesCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new DeployClassesMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ClientAddPartitionListenerCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddPartitionListenerMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ClientCreateProxiesCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new CreateProxiesMessageTask(clientMessage, node, connection);
             }
         };
 //endregion
@@ -1679,6 +1900,251 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
         factories[com.hazelcast.client.impl.protocol.codec.CardinalityEstimatorEstimateCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
             public MessageTask create(ClientMessage clientMessage, Connection connection) {
                 return new CardinalityEstimatorEstimateMessageTask(clientMessage, node, connection);
+            }
+        };
+//endregion
+//region ----------  REGISTRATION FOR com.hazelcast.client.impl.protocol.task.scheduledexecutor
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorSubmitToPartitionCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorSubmitToPartitionMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorSubmitToAddressCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorSubmitToAddressMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorShutdownCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorShutdownMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorDisposeFromPartitionCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskDisposeFromPartitionMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorDisposeFromAddressCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskDisposeFromAddressMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorCancelFromPartitionCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskCancelFromPartitionMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorCancelFromAddressCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskCancelFromAddressMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorIsDoneFromPartitionCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskIsDoneFromPartitionMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorIsDoneFromAddressCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskIsDoneFromAddressMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorGetDelayFromPartitionCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskGetDelayFromPartitionMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorGetDelayFromAddressCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskGetDelayFromAddressMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorGetStatsFromPartitionCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskGetStatisticsFromPartitionMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorGetStatsFromAddressCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskGetStatisticsFromAddressMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorGetResultFromPartitionCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskGetResultFromPartitionMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorGetResultFromAddressCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskGetResultFromAddressMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorGetAllScheduledFuturesCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorGetAllScheduledMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorIsCancelledFromPartitionCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskIsCancelledFromPartitionMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ScheduledExecutorIsCancelledFromAddressCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new ScheduledExecutorTaskIsCancelledFromAddressMessageTask(clientMessage, node, connection);
+            }
+        };
+//endregion
+//region ----------  REGISTRATION FOR continuous query operations of com.hazelcast.client.impl.protocol.task.map
+        factories[com.hazelcast.client.impl.protocol.codec.ContinuousQueryDestroyCacheCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.map.MapDestroyCacheMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ContinuousQueryPublisherCreateCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.map.MapPublisherCreateMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ContinuousQuerySetReadCursorCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.map.MapSetReadCursorMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ContinuousQueryAddListenerCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.map.MapAddListenerMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ContinuousQueryMadePublishableCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.map.MapMadePublishableMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.ContinuousQueryPublisherCreateWithValueCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new com.hazelcast.client.impl.protocol.task.map.MapPublisherCreateWithValueMessageTask(clientMessage, node, connection);
+            }
+        };
+//endregion
+//region ----------  REGISTRATION FOR dynamic config configuration
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddMultiMapConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddMultiMapConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddCardinalityEstimatorConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddCardinalityEstimatorConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddExecutorConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddExecutorConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddDurableExecutorConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddDurableExecutorConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddScheduledExecutorConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddScheduledExecutorConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddRingbufferConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddRingbufferConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddLockConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddLockConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddListConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddListConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddSetConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddSetConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddSemaphoreConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddSemaphoreConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddTopicConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddTopicConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddReplicatedMapConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddReplicatedMapConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddQueueConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddQueueConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddMapConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddMapConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddReliableTopicConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddReliableTopicConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddCacheConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddCacheConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddEventJournalConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddEventJournalConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddFlakeIdGeneratorConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddFlakeIdGeneratorConfigMessageTask(clientMessage, node, connection);
+            }
+        };
+//endregion
+// region ----------- REGISTRATION FOR flake id generator
+        factories[com.hazelcast.client.impl.protocol.codec.FlakeIdGeneratorNewIdBatchCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new NewIdBatchMessageTask(clientMessage, node, connection);
+            }
+        };
+//endregion
+//region ----------  REGISTRATION FOR com.hazelcast.client.impl.protocol.task.crdt.pncounter
+        factories[com.hazelcast.client.impl.protocol.codec.PNCounterGetCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new PNCounterGetMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.PNCounterAddCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new PNCounterAddMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.PNCounterGetConfiguredReplicaCountCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new PNCounterGetConfiguredReplicaCountMessageTask(clientMessage, node, connection);
+            }
+        };
+        factories[com.hazelcast.client.impl.protocol.codec.DynamicConfigAddMerkleTreeConfigCodec.RequestParameters.TYPE.id()] = new MessageTaskFactory() {
+            public MessageTask create(ClientMessage clientMessage, Connection connection) {
+                return new AddMerkleTreeConfigMessageTask(clientMessage, node, connection);
             }
         };
 //endregion

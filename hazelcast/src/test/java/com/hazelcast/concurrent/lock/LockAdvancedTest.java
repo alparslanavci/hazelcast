@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.hazelcast.concurrent.lock;
 
 import com.hazelcast.config.Config;
@@ -121,7 +137,7 @@ public class LockAdvancedTest extends HazelcastTestSupport {
             }
         });
         t.start();
-        assertTrue(latch.await(30, TimeUnit.SECONDS));
+        assertOpenEventually(latch, 30);
     }
 
 
@@ -166,7 +182,7 @@ public class LockAdvancedTest extends HazelcastTestSupport {
         latch2.await(3, TimeUnit.SECONDS);
         Thread.sleep(500);
         lock.unlock();
-        assertTrue(latch.await(5, TimeUnit.SECONDS));
+        assertOpenEventually(latch, 5);
     }
 
     //todo:   what does isLocked2 test?
@@ -205,7 +221,7 @@ public class LockAdvancedTest extends HazelcastTestSupport {
     @Test(timeout = 60000)
     public void testLockInterruption() throws InterruptedException {
         Config config = new Config();
-        config.setProperty(GroupProperty.OPERATION_CALL_TIMEOUT_MILLIS.getName(), "5000");
+        config.setProperty(GroupProperty.OPERATION_CALL_TIMEOUT_MILLIS.getName(), String.valueOf(TimeUnit.SECONDS.toMillis(30)));
         final HazelcastInstance hz = createHazelcastInstance(config);
 
         final Lock lock = hz.getLock("testLockInterruption2");
@@ -223,7 +239,7 @@ public class LockAdvancedTest extends HazelcastTestSupport {
         t.start();
         Thread.sleep(2000);
         t.interrupt();
-        assertTrue("tryLock() is not interrupted!", latch.await(30, TimeUnit.SECONDS));
+        assertOpenEventually("tryLock() is not interrupted!", latch);
         lock.unlock();
         assertTrue("Could not acquire lock!", lock.tryLock());
     }
@@ -252,7 +268,7 @@ public class LockAdvancedTest extends HazelcastTestSupport {
         });
         t.start();
         lockOwner.shutdown();
-        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        assertOpenEventually(latch, 10);
     }
 
     @Test(timeout = 100000)
@@ -278,7 +294,7 @@ public class LockAdvancedTest extends HazelcastTestSupport {
         });
         t.start();
         lockOwner.shutdown();
-        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        assertOpenEventually(latch, 10);
     }
 
     private void assertAllLocked(ILock... locks) {
@@ -329,7 +345,7 @@ public class LockAdvancedTest extends HazelcastTestSupport {
         assertTrue(lock1.tryLock());
         lock1.unlock();
         lock1.unlock();
-        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        assertOpenEventually(latch);
     }
 
     @Test(timeout = 100000)
@@ -370,7 +386,6 @@ public class LockAdvancedTest extends HazelcastTestSupport {
     @Test
     public void testLockInterruptibly() throws Exception {
         Config config = new Config();
-        config.setProperty(GroupProperty.OPERATION_CALL_TIMEOUT_MILLIS.getName(), "5000");
         final TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(1);
         final HazelcastInstance h1 = nodeFactory.newHazelcastInstance(config);
         final ILock lock = h1.getLock(randomString());
@@ -388,7 +403,7 @@ public class LockAdvancedTest extends HazelcastTestSupport {
         t.start();
         sleepMillis(5000);
         t.interrupt();
-        assertTrue(latch.await(15, TimeUnit.SECONDS));
+        assertOpenEventually(latch);
     }
 
     @Test
@@ -429,6 +444,22 @@ public class LockAdvancedTest extends HazelcastTestSupport {
                 assertFalse("Lock should be released after lease expires!", lock.isLocked());
             }
         }, 30);
+    }
+
+    @Test
+    public void testLockLease_withStringPartitionAwareName() throws Exception {
+        TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory();
+        HazelcastInstance hz = factory.newHazelcastInstance();
+        final ILock lock = hz.getLock(randomName() + "@hazelcast");
+
+        spawn(new Runnable() {
+            @Override
+            public void run() {
+                lock.lock(5, TimeUnit.SECONDS);
+            }
+        }).get();
+
+        assertTrue("Lock should have been released after lease expires", lock.tryLock(2, TimeUnit.MINUTES));
     }
 
     @Test(expected = IllegalArgumentException.class)

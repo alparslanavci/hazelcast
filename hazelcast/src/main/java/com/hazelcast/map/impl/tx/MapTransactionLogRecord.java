@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.hazelcast.map.impl.tx;
 
+import com.hazelcast.map.impl.MapDataSerializerHook;
 import com.hazelcast.map.impl.MapRecordKey;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
@@ -116,5 +117,15 @@ public class MapTransactionLogRecord implements TransactionLogRecord {
                 + ", ownerUuid='" + ownerUuid + '\''
                 + ", op=" + op
                 + '}';
+    }
+
+    @Override
+    public int getFactoryId() {
+        return MapDataSerializerHook.F_ID;
+    }
+
+    @Override
+    public int getId() {
+        return MapDataSerializerHook.MAP_TRANSACTION_LOG_RECORD;
     }
 }

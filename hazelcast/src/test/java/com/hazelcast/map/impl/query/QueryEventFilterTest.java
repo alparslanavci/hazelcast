@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,7 +39,6 @@ import static org.mockito.Mockito.when;
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelTest.class})
 public class QueryEventFilterTest {
-
 
     private SerializationService serializationService;
 
@@ -201,7 +200,6 @@ public class QueryEventFilterTest {
 
         assertFalse(filter1.equals(filter2));
     }
-
 
     private QueryableEntry mockEntryWithKeyData(Data key) {
         QueryableEntry entry = mock(QueryableEntry.class);

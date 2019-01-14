@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,10 @@ package com.hazelcast.internal.serialization.impl;
 import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
+import com.hazelcast.nio.serialization.HazelcastSerializationException;
 import com.hazelcast.nio.serialization.Serializer;
 import com.hazelcast.nio.serialization.StreamSerializer;
+import com.hazelcast.nio.serialization.TypedStreamDeserializer;
 
 import java.io.IOException;
 
@@ -44,6 +46,18 @@ class StreamSerializerAdapter implements SerializerAdapter {
     @Override
     public Object read(ObjectDataInput in) throws IOException {
         return serializer.read(in);
+    }
+
+    @Override
+    public Object read(ObjectDataInput in, Class aClass)
+            throws IOException {
+        if (!(serializer instanceof TypedStreamDeserializer)) {
+            throw new HazelcastSerializationException(toString() + " is not implementing the " + TypedStreamDeserializer.class
+                    + " interface. Please implement this interface to deserialize for class " + aClass);
+        }
+
+        TypedStreamDeserializer deserializer = (TypedStreamDeserializer) serializer;
+        return deserializer.read(in, aClass);
     }
 
     @Override

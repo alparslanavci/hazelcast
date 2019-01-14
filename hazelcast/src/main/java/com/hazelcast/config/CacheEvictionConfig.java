@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.config;
 
 import com.hazelcast.internal.eviction.EvictionPolicyComparator;
+import com.hazelcast.nio.serialization.BinaryInterface;
 
 import static com.hazelcast.util.Preconditions.checkNotNull;
 
@@ -27,6 +28,7 @@ import static com.hazelcast.util.Preconditions.checkNotNull;
  * @deprecated Use {@link com.hazelcast.config.EvictionConfig} instead of this
  */
 @Deprecated
+@BinaryInterface
 public class CacheEvictionConfig extends EvictionConfig {
 
     public CacheEvictionConfig() {
@@ -63,6 +65,12 @@ public class CacheEvictionConfig extends EvictionConfig {
         super(config);
     }
 
+    /**
+     * Gets immutable version of this configuration.
+     *
+     * @return immutable version of this configuration
+     * @deprecated this method will be removed in 4.0; it is meant for internal usage only
+     */
     @Override
     public CacheEvictionConfig getAsReadOnly() {
         if (readOnly == null) {
@@ -153,7 +161,7 @@ public class CacheEvictionConfig extends EvictionConfig {
      * @deprecated Use {@link com.hazelcast.config.EvictionConfig#setMaximumSizePolicy(MaxSizePolicy)} instead of this
      */
     public CacheEvictionConfig setMaxSizePolicy(CacheMaxSizePolicy cacheMaxSizePolicy) {
-        checkNotNull(cacheMaxSizePolicy, "Cache Max-Size policy cannot be null !");
+        checkNotNull(cacheMaxSizePolicy, "Cache Max-Size policy cannot be null!");
         setMaximumSizePolicy(cacheMaxSizePolicy.toMaxSizePolicy());
         return this;
     }

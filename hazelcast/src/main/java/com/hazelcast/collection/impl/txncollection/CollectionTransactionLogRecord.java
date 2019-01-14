@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.collection.impl.txncollection;
 
 import com.hazelcast.collection.impl.CollectionTxnUtil;
+import com.hazelcast.collection.impl.collection.CollectionDataSerializerHook;
 import com.hazelcast.collection.impl.txncollection.operations.CollectionCommitOperation;
 import com.hazelcast.collection.impl.txncollection.operations.CollectionPrepareOperation;
 import com.hazelcast.collection.impl.txncollection.operations.CollectionRollbackOperation;
@@ -98,6 +99,12 @@ public class CollectionTransactionLogRecord implements TransactionLogRecord {
         return operationList.size();
     }
 
+    /**
+     * Creates an array of IDs for all operations in this transaction log. The ID is negative if the operation is a remove
+     * operation.
+     *
+     * @return an array of IDs for all operations in this transaction log
+     */
     protected long[] createItemIdArray() {
         int size = operationList.size();
         long[] itemIds = new long[size];
@@ -126,5 +133,13 @@ public class CollectionTransactionLogRecord implements TransactionLogRecord {
         operationList = CollectionTxnUtil.read(in);
     }
 
+    @Override
+    public int getFactoryId() {
+        return CollectionDataSerializerHook.F_ID;
+    }
 
+    @Override
+    public int getId() {
+        return CollectionDataSerializerHook.COLLECTION_TRANSACTION_LOG_RECORD;
+    }
 }

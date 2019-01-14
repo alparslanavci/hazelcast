@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.util;
 
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
 /**
@@ -43,6 +44,18 @@ public final class ConcurrencyUtil {
 
             if (updater.compareAndSet(obj, current, value)) {
                 return;
+            }
+        }
+    }
+
+    public static boolean setIfEqualOrGreaterThan(AtomicLong oldValue, long newValue) {
+        while (true) {
+            long local = oldValue.get();
+            if (newValue < local) {
+                return false;
+            }
+            if (oldValue.compareAndSet(local, newValue)) {
+                return true;
             }
         }
     }
@@ -97,4 +110,5 @@ public final class ConcurrencyUtil {
         }
         return value;
     }
+
 }

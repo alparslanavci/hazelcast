@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,5 +22,11 @@ package com.hazelcast.spi;
  */
 public interface QuorumAwareService {
 
+    /**
+     * Gets the name of the quorum associated with specified operation name.
+     *
+     * @param operationName the operation name for which the quorum name is retured
+     * @return name of the associated quorum, null if there is no associated quorum
+     */
     String getQuorumName(String operationName);
 }

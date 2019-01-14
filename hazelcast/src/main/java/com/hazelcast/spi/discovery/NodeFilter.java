@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,6 @@
 
 package com.hazelcast.spi.discovery;
 
-import com.hazelcast.spi.annotation.Beta;
-
 /**
  * The NodeFilter, if supplied, will retrieve all discovered nodes and might
  * apply additional filtering based on vendor provided metadata. These metadata
@@ -33,7 +31,6 @@ import com.hazelcast.spi.annotation.Beta;
  *
  * @since 3.6
  */
-@Beta
 public interface NodeFilter {
 
     /**

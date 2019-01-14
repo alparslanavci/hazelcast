@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.query.impl.predicates;
 
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
+import com.hazelcast.nio.serialization.BinaryInterface;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.query.Predicate;
 import com.hazelcast.query.QueryException;
@@ -34,13 +35,15 @@ import java.util.Map;
 import static com.hazelcast.internal.serialization.impl.FactoryIdHelper.PREDICATE_DS_FACTORY_ID;
 
 /**
- * Provides base features for predicates, such as extraction and convertion of the attribute's value.
+ * Provides base features for predicates, such as extraction and conversion of the attribute's value.
  * It also handles apply() on MultiResult.
  */
+@BinaryInterface
 public abstract class AbstractPredicate<K, V>
         implements Predicate<K, V>, IdentifiedDataSerializable {
 
     String attributeName;
+
     private transient volatile AttributeType attributeType;
 
     protected AbstractPredicate() {
@@ -151,5 +154,27 @@ public abstract class AbstractPredicate<K, V>
     @Override
     public int getFactoryId() {
         return PREDICATE_DS_FACTORY_ID;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (o == null || !(o instanceof AbstractPredicate)) {
+            return false;
+        }
+
+        AbstractPredicate<?, ?> that = (AbstractPredicate<?, ?>) o;
+        if (!that.canEqual(this)) {
+            return false;
+        }
+        return attributeName != null ? attributeName.equals(that.attributeName) : that.attributeName == null;
+    }
+
+    public boolean canEqual(Object other) {
+        return (other instanceof AbstractPredicate);
+    }
+
+    @Override
+    public int hashCode() {
+        return attributeName != null ? attributeName.hashCode() : 0;
     }
 }

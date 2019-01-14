@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,10 @@
 
 package com.hazelcast.cache.impl.event;
 
+import com.hazelcast.cache.impl.CacheDataSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
-import com.hazelcast.nio.serialization.DataSerializable;
+import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.spi.EventFilter;
 
 import java.io.IOException;
@@ -27,7 +28,7 @@ import java.io.IOException;
  * Used to filter partition lost listener events
  * @since 3.6
  */
-public class CachePartitionLostEventFilter implements EventFilter, DataSerializable {
+public class CachePartitionLostEventFilter implements EventFilter, IdentifiedDataSerializable {
 
     @Override
     public boolean eval(Object arg) {
@@ -52,4 +53,13 @@ public class CachePartitionLostEventFilter implements EventFilter, DataSerializa
         return 0;
     }
 
+    @Override
+    public int getFactoryId() {
+        return CacheDataSerializerHook.F_ID;
+    }
+
+    @Override
+    public int getId() {
+        return CacheDataSerializerHook.CACHE_PARTITION_LOST_EVENT_FILTER;
+    }
 }

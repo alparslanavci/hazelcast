@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,37 +17,44 @@
 package com.hazelcast.client.spi.impl;
 
 import com.hazelcast.client.spi.ClientExecutionService;
-import com.hazelcast.core.ICompletableFuture;
+import com.hazelcast.internal.metrics.MetricsProvider;
+import com.hazelcast.internal.metrics.MetricsRegistry;
+import com.hazelcast.internal.metrics.Probe;
+import com.hazelcast.internal.util.RuntimeAvailableProcessors;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.LoggingService;
 import com.hazelcast.spi.properties.HazelcastProperties;
 import com.hazelcast.spi.properties.HazelcastProperty;
-import com.hazelcast.util.executor.CompletableFutureTask;
+import com.hazelcast.util.executor.LoggingScheduledExecutor;
 import com.hazelcast.util.executor.PoolExecutorThreadFactory;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-public final class ClientExecutionServiceImpl implements ClientExecutionService {
+import static com.hazelcast.internal.metrics.ProbeLevel.MANDATORY;
+import static com.hazelcast.spi.properties.GroupProperty.TASK_SCHEDULER_REMOVE_ON_CANCEL;
+import static java.lang.Thread.currentThread;
+
+public final class ClientExecutionServiceImpl implements ClientExecutionService, MetricsProvider {
 
     public static final HazelcastProperty INTERNAL_EXECUTOR_POOL_SIZE
             = new HazelcastProperty("hazelcast.client.internal.executor.pool.size", 3);
 
-    private static final long TERMINATE_TIMEOUT_SECONDS = 30;
+    public static final long TERMINATE_TIMEOUT_SECONDS = 30;
 
     private final ILogger logger;
     private final ExecutorService userExecutor;
     private final ScheduledExecutorService internalExecutor;
 
-    public ClientExecutionServiceImpl(String name, ThreadGroup threadGroup, ClassLoader classLoader,
+    public ClientExecutionServiceImpl(String name, ClassLoader classLoader,
                                       HazelcastProperties properties, int poolSize, LoggingService loggingService) {
         int internalPoolSize = properties.getInteger(INTERNAL_EXECUTOR_POOL_SIZE);
         if (internalPoolSize <= 0) {
@@ -55,11 +62,12 @@ public final class ClientExecutionServiceImpl implements ClientExecutionService 
         }
         int executorPoolSize = poolSize;
         if (executorPoolSize <= 0) {
-            executorPoolSize = Runtime.getRuntime().availableProcessors();
+            executorPoolSize = RuntimeAvailableProcessors.get();
         }
         logger = loggingService.getLogger(ClientExecutionService.class);
-        internalExecutor = new ScheduledThreadPoolExecutor(internalPoolSize,
-                new PoolExecutorThreadFactory(threadGroup, name + ".internal-", classLoader),
+        internalExecutor = new LoggingScheduledExecutor(logger, internalPoolSize,
+                new PoolExecutorThreadFactory(name + ".internal-", classLoader),
+                properties.getBoolean(TASK_SCHEDULER_REMOVE_ON_CANCEL),
                 new RejectedExecutionHandler() {
                     public void rejectedExecution(Runnable r, ThreadPoolExecutor executor) {
                         String message = "Internal executor rejected task: " + r + ", because client is shutting down...";
@@ -69,59 +77,24 @@ public final class ClientExecutionServiceImpl implements ClientExecutionService 
                 });
         userExecutor = new ThreadPoolExecutor(executorPoolSize, executorPoolSize, 0L, TimeUnit.MILLISECONDS,
                 new LinkedBlockingQueue<Runnable>(),
-                new PoolExecutorThreadFactory(threadGroup, name + ".user-", classLoader),
+                new PoolExecutorThreadFactory(name + ".user-", classLoader),
                 new RejectedExecutionHandler() {
                     public void rejectedExecution(Runnable r, ThreadPoolExecutor executor) {
-                        String message = "Internal executor rejected task: " + r + ", because client is shutting down...";
+                        String message = "User executor rejected task: " + r + ", because client is shutting down...";
                         logger.finest(message);
                         throw new RejectedExecutionException(message);
                     }
                 });
     }
 
-    public void executeInternal(Runnable runnable) {
-        internalExecutor.execute(runnable);
-    }
-
-    public <T> ICompletableFuture<T> submitInternal(Runnable runnable) {
-        CompletableFutureTask futureTask = new CompletableFutureTask(runnable, null, internalExecutor);
-        internalExecutor.submit(futureTask);
-        return futureTask;
-    }
-
-    @Override
-    public void execute(Runnable command) {
-        userExecutor.execute(command);
-    }
-
-    @Override
-    public ICompletableFuture<?> submit(Runnable task) {
-        CompletableFutureTask futureTask = new CompletableFutureTask(task, null, getAsyncExecutor());
-        userExecutor.submit(futureTask);
-        return futureTask;
-    }
-
-    @Override
-    public <T> ICompletableFuture<T> submit(Callable<T> task) {
-        CompletableFutureTask<T> futureTask = new CompletableFutureTask<T>(task, getAsyncExecutor());
-        userExecutor.submit(futureTask);
-        return futureTask;
-    }
-
-    /**
-     * Utilized when given command needs to make a remote call.
-     *
-     * The response of the remote call is not handled in the {@link Runnable} itself, but rather
-     * in the execution callback so that executor is not blocked because of a remote operation.
-     *
-     * @param command the {@link Runnable} to schedule
-     * @param delay   the delay for the scheduled execution
-     * @param unit    the {@link TimeUnit} of the delay
-     * @return scheduledFuture
-     */
     @Override
     public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
         return internalExecutor.schedule(command, delay, unit);
+    }
+
+    @Override
+    public <V> ScheduledFuture<Future<V>> schedule(Callable<V> command, long delay, TimeUnit unit) {
+        return (ScheduledFuture<Future<V>>) internalExecutor.schedule(command, delay, unit);
     }
 
     @Override
@@ -130,8 +103,18 @@ public final class ClientExecutionServiceImpl implements ClientExecutionService 
     }
 
     @Override
-    public ExecutorService getAsyncExecutor() {
+    public void execute(Runnable command) {
+        internalExecutor.execute(command);
+    }
+
+    @Override
+    public ExecutorService getUserExecutor() {
         return userExecutor;
+    }
+
+    @Probe (level = MANDATORY)
+    public int getUserExecutorQueueSize() {
+        return ((ThreadPoolExecutor) userExecutor).getQueue().size();
     }
 
     public void shutdown() {
@@ -144,15 +127,17 @@ public final class ClientExecutionServiceImpl implements ClientExecutionService 
         try {
             boolean success = executor.awaitTermination(TERMINATE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (!success) {
-                logger.warning(name + " executor awaitTermination could not completed in "
-                        + TERMINATE_TIMEOUT_SECONDS + " seconds");
+                logger.warning(name + " executor awaitTermination could not complete in " + TERMINATE_TIMEOUT_SECONDS
+                        + " seconds");
             }
         } catch (InterruptedException e) {
+            currentThread().interrupt();
             logger.warning(name + " executor await termination is interrupted", e);
         }
     }
 
-    public ExecutorService getInternalExecutor() {
-        return internalExecutor;
+    @Override
+    public void provideMetrics(MetricsRegistry registry) {
+        registry.scanAndRegister(this, "executionService");
     }
 }

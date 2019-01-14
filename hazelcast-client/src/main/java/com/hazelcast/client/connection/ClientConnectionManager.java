@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,23 +16,20 @@
 
 package com.hazelcast.client.connection;
 
-import com.hazelcast.client.impl.protocol.ClientMessage;
-import com.hazelcast.client.spi.impl.ConnectionHeartbeatListener;
+import com.hazelcast.client.connection.nio.ClientConnection;
+import com.hazelcast.client.impl.client.ClientPrincipal;
 import com.hazelcast.nio.Address;
 import com.hazelcast.nio.Connection;
 import com.hazelcast.nio.ConnectionListenable;
 
 import java.io.IOException;
+import java.util.Collection;
+import java.util.concurrent.Future;
 
 /**
  * Responsible for managing {@link com.hazelcast.client.connection.nio.ClientConnection} objects.
  */
 public interface ClientConnectionManager extends ConnectionListenable {
-
-    /**
-     * Shutdown clientConnectionManager
-     */
-    void shutdown();
 
     /**
      * Check if client connection manager is alive.
@@ -43,51 +40,34 @@ public interface ClientConnectionManager extends ConnectionListenable {
     boolean isAlive();
 
     /**
-     * Start clientConnectionManager
-     */
-    void start();
-
-    /**
      * @param address to be connected
      * @return connection if available, null otherwise
      */
-    Connection getConnection(Address address);
+    Connection getActiveConnection(Address address);
 
     /**
      * @param address to be connected
-     * @param asOwner true if connection should be authenticated as owner, false otherwise
      * @return associated connection if available, creates new connection otherwise
      * @throws IOException if connection is not established
      */
-    Connection getOrConnect(Address address, boolean asOwner) throws IOException;
+    Connection getOrConnect(Address address) throws IOException;
 
     /**
      * @param address to be connected
-     * @param asOwner true if connection should be authenticated as owner, false otherwise
      * @return associated connection if available, returns null and triggers new connection creation otherwise
+     * @throws IOException if connection is not able to triggered
      */
-    Connection getOrTriggerConnect(Address address, boolean asOwner);
+    Connection getOrTriggerConnect(Address address, boolean acquiresResource) throws IOException;
 
-    /**
-     * Destroys the connection
-     * Clears related resources of given connection.
-     * ConnectionListener.connectionRemoved is called on registered listeners.
-     * <p/>
-     * If connection is already destroyed before calling this then does nothing.
-     *
-     * @param connection to be closed
-     * @param reason the reason of closing this exception. Can be null if no reason is given.
-     * @param cause  exception that cause connection to be closed, null if closed explicitly
-     */
-    void destroyConnection(Connection connection, String reason, Throwable cause);
+    Collection<ClientConnection> getActiveConnections();
 
-    /**
-     * Handles incoming network package
-     *
-     * @param message    to be processed
-     * @param connection that client message come from
-     */
-    void handleClientMessage(ClientMessage message, Connection connection);
+    Address getOwnerConnectionAddress();
 
-    void addConnectionHeartbeatListener(ConnectionHeartbeatListener connectionHeartbeatListener);
+    ClientPrincipal getPrincipal();
+
+    ClientConnection getOwnerConnection();
+
+    void connectToCluster();
+
+    Future<Void> connectToClusterAsync();
 }

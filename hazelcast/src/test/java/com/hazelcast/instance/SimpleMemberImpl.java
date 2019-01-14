@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.hazelcast.core.Member;
 import com.hazelcast.nio.Address;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
+import com.hazelcast.version.MemberVersion;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -30,16 +31,18 @@ public class SimpleMemberImpl implements Member {
     private String uuid;
     private InetSocketAddress address;
     private boolean liteMember;
+    private MemberVersion version;
 
     @SuppressWarnings("unused")
     public SimpleMemberImpl() {
     }
 
-    public SimpleMemberImpl(String uuid, InetSocketAddress address) {
-        this(uuid, address, false);
+    public SimpleMemberImpl(MemberVersion version, String uuid, InetSocketAddress address) {
+        this(version, uuid, address, false);
     }
 
-    public SimpleMemberImpl(String uuid, InetSocketAddress address, boolean liteMember) {
+    public SimpleMemberImpl(MemberVersion version, String uuid, InetSocketAddress address, boolean liteMember) {
+        this.version = version;
         this.uuid = uuid;
         this.address = address;
         this.liteMember = liteMember;
@@ -157,7 +160,13 @@ public class SimpleMemberImpl implements Member {
     }
 
     @Override
+    public MemberVersion getVersion() {
+        return null;
+    }
+
+    @Override
     public void writeData(ObjectDataOutput out) throws IOException {
+        out.writeObject(version);
         out.writeUTF(uuid);
         out.writeObject(address);
         out.writeBoolean(liteMember);
@@ -165,6 +174,7 @@ public class SimpleMemberImpl implements Member {
 
     @Override
     public void readData(ObjectDataInput in) throws IOException {
+        version = in.readObject();
         uuid = in.readUTF();
         address = in.readObject();
         liteMember = in.readBoolean();

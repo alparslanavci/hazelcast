@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -123,6 +123,7 @@ final class BasicMapStoreContext implements MapStoreContext {
         // create store.
         final Object store = createStore(mapName, mapStoreConfig, configClassLoader);
         final MapStoreWrapper storeWrapper = new MapStoreWrapper(mapName, store);
+        storeWrapper.instrument(nodeEngine);
 
         setStoreImplToWritableMapStoreConfig(nodeEngine, mapName, store);
 

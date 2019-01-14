@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 package com.hazelcast.transaction.impl;
 
-import com.hazelcast.nio.serialization.DataSerializable;
+import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.spi.Operation;
 
 /**
@@ -24,7 +24,7 @@ import com.hazelcast.spi.Operation;
  *
  * @see Transaction
  */
-public interface TransactionLogRecord extends DataSerializable {
+public interface TransactionLogRecord extends IdentifiedDataSerializable {
 
     /**
      * Gets the transaction-log-key that uniquely identifies the {@link TransactionLogRecord} within the {@link TransactionLog}.

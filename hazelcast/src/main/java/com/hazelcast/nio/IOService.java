@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,21 +16,21 @@
 
 package com.hazelcast.nio;
 
-import com.hazelcast.client.impl.protocol.ClientMessage;
+import com.hazelcast.client.impl.ClientEngine;
 import com.hazelcast.config.SSLConfig;
-import com.hazelcast.config.SocketInterceptorConfig;
 import com.hazelcast.config.SymmetricEncryptionConfig;
 import com.hazelcast.internal.ascii.TextCommandService;
+import com.hazelcast.internal.networking.InboundHandler;
+import com.hazelcast.internal.networking.OutboundHandler;
 import com.hazelcast.internal.serialization.InternalSerializationService;
-import com.hazelcast.logging.ILogger;
-import com.hazelcast.nio.serialization.Data;
-import com.hazelcast.nio.tcp.ReadHandler;
-import com.hazelcast.nio.tcp.SocketChannelWrapperFactory;
+import com.hazelcast.logging.LoggingService;
 import com.hazelcast.nio.tcp.TcpIpConnection;
-import com.hazelcast.nio.tcp.WriteHandler;
 import com.hazelcast.spi.EventService;
 import com.hazelcast.spi.annotation.PrivateApi;
+import com.hazelcast.spi.properties.HazelcastProperties;
 
+import java.io.IOException;
+import java.net.Socket;
 import java.util.Collection;
 
 @PrivateApi
@@ -40,33 +40,25 @@ public interface IOService {
 
     boolean isActive();
 
-    ILogger getLogger(String name);
+    HazelcastProperties properties();
 
-    void onOutOfMemory(OutOfMemoryError oom);
+    String getHazelcastName();
+
+    LoggingService getLoggingService();
 
     Address getThisAddress();
 
     void onFatalError(Exception e);
 
-    SocketInterceptorConfig getSocketInterceptorConfig();
-
     SymmetricEncryptionConfig getSymmetricEncryptionConfig();
 
     SSLConfig getSSLConfig();
 
-    void handleClientMessage(ClientMessage cm, Connection connection);
+    ClientEngine getClientEngine();
 
     TextCommandService getTextCommandService();
 
-    boolean isMemcacheEnabled();
-
-    boolean isRestEnabled();
-
     void removeEndpoint(Address endpoint);
-
-    String getThreadPrefix();
-
-    ThreadGroup getThreadGroup();
 
     void onSuccessfulConnection(Address address);
 
@@ -78,50 +70,17 @@ public interface IOService {
 
     boolean isSocketBindAny();
 
-    int getSocketReceiveBufferSize();
+    void interceptSocket(Socket socket, boolean onAccept) throws IOException;
 
-    int getSocketSendBufferSize();
-
-    boolean isSocketBufferDirect();
-
-    /**
-     * Size of receive buffers for connections opened by clients
-     *
-     * @return size in bytes
-     */
-    int getSocketClientReceiveBufferSize();
-
-    /**
-     * Size of send buffers for connections opened by clients
-     *
-     * @return size in bytes
-     */
-    int getSocketClientSendBufferSize();
-
-    int getSocketLingerSeconds();
+    boolean isSocketInterceptorEnabled();
 
     int getSocketConnectTimeoutSeconds();
-
-    boolean getSocketKeepAlive();
-
-    boolean getSocketNoDelay();
-
-    int getInputSelectorThreadCount();
-
-    int getOutputSelectorThreadCount();
 
     long getConnectionMonitorInterval();
 
     int getConnectionMonitorMaxFaults();
 
-    /**
-     * @return Time interval between two I/O imbalance checks.
-     */
-    int getBalancerIntervalSeconds();
-
     void onDisconnect(Address endpoint, Throwable cause);
-
-    boolean isClient();
 
     void executeAsync(Runnable runnable);
 
@@ -129,17 +88,11 @@ public interface IOService {
 
     Collection<Integer> getOutboundPorts();
 
-    Data toData(Object obj);
-
-    Object toObject(Data data);
-
     InternalSerializationService getSerializationService();
-
-    SocketChannelWrapperFactory getSocketChannelWrapperFactory();
 
     MemberSocketInterceptor getMemberSocketInterceptor();
 
-    ReadHandler createReadHandler(TcpIpConnection connection);
+    InboundHandler[] createMemberInboundHandlers(TcpIpConnection connection);
 
-    WriteHandler createWriteHandler(TcpIpConnection connection);
+    OutboundHandler[] createMemberOutboundHandlers(TcpIpConnection connection);
 }

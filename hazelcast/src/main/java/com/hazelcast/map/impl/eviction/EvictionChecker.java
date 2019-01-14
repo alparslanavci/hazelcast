@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,14 @@
 
 package com.hazelcast.map.impl.eviction;
 
-import com.hazelcast.cache.impl.nearcache.NearCache;
 import com.hazelcast.config.MapConfig;
 import com.hazelcast.config.MaxSizeConfig;
+import com.hazelcast.internal.nearcache.NearCache;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.map.impl.MapContainer;
 import com.hazelcast.map.impl.MapServiceContext;
 import com.hazelcast.map.impl.PartitionContainer;
+import com.hazelcast.map.impl.nearcache.MapNearCacheManager;
 import com.hazelcast.map.impl.recordstore.RecordStore;
 import com.hazelcast.monitor.NearCacheStats;
 import com.hazelcast.nio.Address;
@@ -34,6 +35,7 @@ import com.hazelcast.util.MemoryInfoAccessor;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.hazelcast.cluster.memberselector.MemberSelectors.DATA_MEMBER_SELECTOR;
 import static com.hazelcast.memory.MemorySize.toPrettyString;
@@ -51,10 +53,12 @@ import static java.lang.String.format;
 public class EvictionChecker {
 
     protected static final double ONE_HUNDRED_PERCENT = 100D;
+    private static final int MIN_TRANSLATED_PARTITION_SIZE = 1;
 
     protected final ILogger logger;
     protected final MapServiceContext mapServiceContext;
     protected final MemoryInfoAccessor memoryInfoAccessor;
+    protected final AtomicBoolean misconfiguredPerNodeMaxSizeWarningLogged;
 
     public EvictionChecker(MemoryInfoAccessor givenMemoryInfoAccessor, MapServiceContext mapServiceContext) {
         checkNotNull(givenMemoryInfoAccessor, "givenMemoryInfoAccessor cannot be null");
@@ -67,6 +71,8 @@ public class EvictionChecker {
         if (logger.isFinestEnabled()) {
             logger.finest("Used memoryInfoAccessor=" + this.memoryInfoAccessor.getClass().getCanonicalName());
         }
+
+        this.misconfiguredPerNodeMaxSizeWarningLogged = new AtomicBoolean();
     }
 
 
@@ -101,15 +107,15 @@ public class EvictionChecker {
     }
 
     protected boolean checkPerNodeEviction(RecordStore recordStore) {
-        double maxExpectedRecordStoreSize = calculatePerNodeMaxRecordStoreSize(recordStore);
-        return recordStore.size() > maxExpectedRecordStoreSize;
+        double maxAllowedStoreSize = translatePerNodeSizeToPartitionSize(recordStore);
+        return recordStore.size() > maxAllowedStoreSize;
     }
 
     /**
      * Calculates and returns the expected maximum size of an evicted record-store
      * when {@link com.hazelcast.config.MaxSizeConfig.MaxSizePolicy#PER_NODE PER_NODE} max-size-policy is used.
      */
-    public double calculatePerNodeMaxRecordStoreSize(RecordStore recordStore) {
+    public double translatePerNodeSizeToPartitionSize(RecordStore recordStore) {
         MapConfig mapConfig = recordStore.getMapContainer().getMapConfig();
         MaxSizeConfig maxSizeConfig = mapConfig.getMaxSizeConfig();
         NodeEngine nodeEngine = mapServiceContext.getNodeEngine();
@@ -118,8 +124,19 @@ public class EvictionChecker {
         int memberCount = nodeEngine.getClusterService().getSize(DATA_MEMBER_SELECTOR);
         int partitionCount = nodeEngine.getPartitionService().getPartitionCount();
 
-        return (1D * configuredMaxSize * memberCount / partitionCount);
-
+        double translatedPartitionSize = (1D * configuredMaxSize * memberCount / partitionCount);
+        if (translatedPartitionSize < 1) {
+            translatedPartitionSize = MIN_TRANSLATED_PARTITION_SIZE;
+            if (misconfiguredPerNodeMaxSizeWarningLogged.compareAndSet(false, true)) {
+                int minMaxSize = (int) Math.ceil((1D * partitionCount / memberCount));
+                int newSize = MIN_TRANSLATED_PARTITION_SIZE * partitionCount / memberCount;
+                logger.warning(format("The max size configuration for map \"%s\" does not allow any data in the map. "
+                                + "Given the current cluster size of %d members with %d partitions, max size should be at "
+                                + "least %d. Map size is forced set to %d for backward compatibility", mapConfig.getName(),
+                        memberCount, partitionCount, minMaxSize, newSize));
+            }
+        }
+        return translatedPartitionSize;
     }
 
     protected boolean checkPerPartitionEviction(String mapName, MaxSizeConfig maxSizeConfig, int partitionId) {
@@ -231,9 +248,12 @@ public class EvictionChecker {
             return heapCost;
         }
 
-        NearCache nearCache = mapServiceContext.getNearCacheProvider().getOrCreateNearCache(mapName);
+        MapNearCacheManager mapNearCacheManager = mapServiceContext.getMapNearCacheManager();
+        NearCache nearCache = mapNearCacheManager.getNearCache(mapName);
         NearCacheStats nearCacheStats = nearCache.getNearCacheStats();
-        return heapCost + nearCacheStats.getOwnedEntryMemoryCost();
+        heapCost += nearCacheStats.getOwnedEntryMemoryCost();
+
+        return heapCost;
     }
 
     protected int getRecordStoreSize(String mapName, PartitionContainer partitionContainer) {
@@ -249,7 +269,7 @@ public class EvictionChecker {
         if (existingRecordStore == null) {
             return 0L;
         }
-        return existingRecordStore.getHeapCost();
+        return existingRecordStore.getOwnedEntryCost();
     }
 
     protected List<Integer> findPartitionIds() {

@@ -1,23 +1,40 @@
+/*
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.hazelcast.spi.impl.operationservice.impl;
 
-import com.hazelcast.config.Config;
-import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.HazelcastInstanceNotActiveException;
 import com.hazelcast.core.MemberLeftException;
+import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.Operation;
+import com.hazelcast.spi.impl.operationservice.impl.Invocation.Context;
+import com.hazelcast.spi.impl.sequence.CallIdSequenceWithBackpressure;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
-import com.hazelcast.test.RequireAssertEnabled;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
+import org.mockito.Mockito;
 
 import java.util.concurrent.ExecutionException;
 
-import static com.hazelcast.spi.properties.GroupProperty.BACKPRESSURE_ENABLED;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.fail;
@@ -27,18 +44,13 @@ import static org.junit.Assert.fail;
 public class InvocationRegistryTest extends HazelcastTestSupport {
 
     private InvocationRegistry invocationRegistry;
-    private OperationServiceImpl operationService;
-    private HazelcastInstance local;
+    private ILogger logger;
 
     @Before
     public void setup() {
-        Config config = new Config();
-        config.setProperty(BACKPRESSURE_ENABLED.getName(), "false");
-        local = createHazelcastInstance(config);
-        warmUpPartitions(local);
-
-        operationService = (OperationServiceImpl) getOperationService(local);
-        invocationRegistry = operationService.invocationRegistry;
+        logger = Mockito.mock(ILogger.class);
+        final int capacity = 2;
+        invocationRegistry = new InvocationRegistry(logger, new CallIdSequenceWithBackpressure(capacity, 1000));
     }
 
     private Invocation newInvocation() {
@@ -46,8 +58,9 @@ public class InvocationRegistryTest extends HazelcastTestSupport {
     }
 
     private Invocation newInvocation(Operation op) {
-        Invocation.Context context = operationService.invocationContext;
-        return new PartitionInvocation(context, op, 0, 0, 0, false);
+        Invocation.Context context = new Context(null, null, null, null, null,
+                1000, invocationRegistry, null, logger, null, null, null, null, null, null, null, null, null);
+        return new PartitionInvocation(context, op, 0, 0, 0, false, false);
     }
 
     // ====================== register ===============================
@@ -65,23 +78,21 @@ public class InvocationRegistryTest extends HazelcastTestSupport {
     }
 
     @Test
-    @RequireAssertEnabled
-    public void register_whenAlreadyRegistered_thenAssertionError() {
+    public void register_whenAlreadyRegistered_thenException() {
         Operation op = new DummyBackupAwareOperation();
         Invocation invocation = newInvocation(op);
         invocationRegistry.register(invocation);
-        long oldCallId = invocationRegistry.getLastCallId();
-
-        try {
-            invocationRegistry.register(invocation);
-            fail();
-        } catch (AssertionError expected) {
-
+        final long originalCallId = invocationRegistry.getLastCallId();
+        for (int i = 0; i < 10; i++) {
+            try {
+                invocationRegistry.register(invocation);
+                fail();
+            } catch (IllegalStateException e) {
+                // expected
+            }
+            assertSame(invocation, invocationRegistry.get(originalCallId));
+            assertEquals(originalCallId, invocation.op.getCallId());
         }
-
-        assertSame(invocation, invocationRegistry.get(oldCallId));
-        assertEquals(oldCallId, invocationRegistry.getLastCallId());
-        assertEquals(oldCallId, invocation.op.getCallId());
     }
 
     // ====================== deregister ===============================
@@ -107,7 +118,7 @@ public class InvocationRegistryTest extends HazelcastTestSupport {
         invocationRegistry.register(invocation);
         invocationRegistry.deregister(invocation);
 
-        assertEquals(0, invocation.op.getCallId());
+        assertFalse(invocation.isActive());
     }
 
     @Test
@@ -138,7 +149,6 @@ public class InvocationRegistryTest extends HazelcastTestSupport {
         assertEquals(2, invocationRegistry.size());
     }
 
-    // ===================== onMemberLeft ============================
 
     // ===================== reset ============================
 
@@ -148,7 +158,7 @@ public class InvocationRegistryTest extends HazelcastTestSupport {
         invocationRegistry.register(invocation);
         long callId = invocation.op.getCallId();
 
-        invocationRegistry.reset();
+        invocationRegistry.reset(null);
 
         InvocationFuture f = invocation.future;
         try {

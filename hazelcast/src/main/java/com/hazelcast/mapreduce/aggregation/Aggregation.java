@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,13 @@
 
 package com.hazelcast.mapreduce.aggregation;
 
+import com.hazelcast.aggregation.Aggregator;
+import com.hazelcast.core.IMap;
 import com.hazelcast.mapreduce.Collator;
 import com.hazelcast.mapreduce.CombinerFactory;
 import com.hazelcast.mapreduce.Mapper;
 import com.hazelcast.mapreduce.ReducerFactory;
-import com.hazelcast.spi.annotation.Beta;
+import com.hazelcast.query.Predicate;
 
 import java.util.Map;
 
@@ -49,8 +51,9 @@ import java.util.Map;
  * @param <Supplied> the value type returned from the {@link com.hazelcast.mapreduce.aggregation.Supplier}
  * @param <Result>   the value type returned from the aggregation
  * @since 3.3
+ * @deprecated Use new fast-aggregations {@link IMap#aggregate(Aggregator)} or {@link IMap#aggregate(Aggregator, Predicate)}.
  */
-@Beta
+@Deprecated
 public interface Aggregation<Key, Supplied, Result> {
 
     /**

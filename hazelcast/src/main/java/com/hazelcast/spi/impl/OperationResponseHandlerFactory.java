@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,11 +37,6 @@ public final class OperationResponseHandlerFactory {
         @Override
         public void sendResponse(Operation op, Object obj) {
         }
-
-        @Override
-        public boolean isLocal() {
-            return false;
-        }
     }
 
     public static OperationResponseHandler createErrorLoggingResponseHandler(ILogger logger) {
@@ -61,11 +56,6 @@ public final class OperationResponseHandlerFactory {
                 Throwable t = (Throwable) obj;
                 logger.severe(t);
             }
-        }
-
-        @Override
-        public boolean isLocal() {
-            return true;
         }
     }
 }

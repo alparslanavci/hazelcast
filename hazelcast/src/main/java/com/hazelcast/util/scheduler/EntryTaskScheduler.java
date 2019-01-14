@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,11 +35,27 @@ public interface EntryTaskScheduler<K, V> {
      */
     boolean schedule(long delayMillis, K key, V object);
 
+    /**
+     * Cancel all scheduled executions with the given key.
+     *
+     * @param key the scheduled key
+     * @return the cancelled scheduled execution
+     */
     ScheduledEntry<K, V> cancel(K key);
 
+    /**
+     * Cancels the scheduled executions for the given key and value if present. The method returns the number of cancelled
+     * scheduled entries.
+     *
+     * @param key   the scheduled key
+     * @param value the scheduled value
+     * @return the number of cancelled scheduled entries.
+     */
     int cancelIfExists(K key, V value);
 
+    /** Return the entry for the scheduled key or null if there is none */
     ScheduledEntry<K, V> get(K key);
 
+    /** Cancel all scheduled executions */
     void cancelAll();
 }

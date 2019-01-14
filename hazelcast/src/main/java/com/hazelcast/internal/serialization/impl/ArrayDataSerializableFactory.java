@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,13 @@
 
 package com.hazelcast.internal.serialization.impl;
 
-import com.hazelcast.nio.serialization.DataSerializableFactory;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
+import com.hazelcast.nio.serialization.impl.VersionedDataSerializableFactory;
 import com.hazelcast.util.ConstructorFunction;
+import com.hazelcast.util.VersionAwareConstructorFunction;
+import com.hazelcast.version.Version;
 
-public final class ArrayDataSerializableFactory implements DataSerializableFactory {
+public final class ArrayDataSerializableFactory implements VersionedDataSerializableFactory {
 
     private final ConstructorFunction<Integer, IdentifiedDataSerializable>[] constructors;
     private final int len;
@@ -40,6 +42,23 @@ public final class ArrayDataSerializableFactory implements DataSerializableFacto
         if (typeId >= 0 && typeId < len) {
             ConstructorFunction<Integer, IdentifiedDataSerializable> factory = constructors[typeId];
             return factory != null ? factory.createNew(typeId) : null;
+        }
+        return null;
+    }
+
+    @Override
+    public IdentifiedDataSerializable create(int typeId, Version version) {
+        if (typeId >= 0 && typeId < len) {
+            ConstructorFunction<Integer, IdentifiedDataSerializable> factory = constructors[typeId];
+            if (factory == null) {
+                return null;
+            }
+            if (factory instanceof VersionAwareConstructorFunction) {
+                return ((VersionAwareConstructorFunction<Integer, IdentifiedDataSerializable>) factory)
+                        .createNew(typeId, version);
+            } else {
+                return factory.createNew(typeId);
+            }
         }
         return null;
     }

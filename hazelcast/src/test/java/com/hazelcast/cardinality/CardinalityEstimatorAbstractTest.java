@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,19 +26,19 @@ import com.hazelcast.nio.serialization.StreamSerializer;
 import com.hazelcast.test.HazelcastTestSupport;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameter;
+import org.junit.runners.Parameterized.Parameters;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.Collection;
 
+import static java.util.Arrays.asList;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assume.assumeTrue;
 
-public abstract class CardinalityEstimatorAbstractTest
-        extends HazelcastTestSupport {
+public abstract class CardinalityEstimatorAbstractTest extends HazelcastTestSupport {
 
-    @Parameterized.Parameters(name = "config:{0}")
+    @Parameters(name = "config:{0}")
     public static Collection<Object[]> params() {
         final Config config = new Config();
         final SerializerConfig serializerConfig = new SerializerConfig();
@@ -46,8 +46,9 @@ public abstract class CardinalityEstimatorAbstractTest
         serializerConfig.setTypeClass(CustomObject.class);
         config.getSerializationConfig().addSerializerConfig(serializerConfig);
 
-        return Arrays.asList(new Object[][] {
-                { null }, { config }
+        return asList(new Object[][]{
+                {null},
+                {config},
         });
     }
 
@@ -55,7 +56,7 @@ public abstract class CardinalityEstimatorAbstractTest
 
     private CardinalityEstimator estimator;
 
-    @Parameterized.Parameter(0)
+    @Parameter(0)
     public Config config;
 
     @Before
@@ -75,8 +76,7 @@ public abstract class CardinalityEstimatorAbstractTest
     }
 
     @Test
-    public void estimateAsync()
-            throws Exception {
+    public void estimateAsync() throws Exception {
         assertEquals(0, estimator.estimateAsync().get().longValue());
     }
 
@@ -95,8 +95,7 @@ public abstract class CardinalityEstimatorAbstractTest
     }
 
     @Test
-    public void addAsync()
-            throws Exception {
+    public void addAsync() throws Exception {
         estimator.addAsync(1L).get();
         assertEquals(1L, estimator.estimateAsync().get().longValue());
         estimator.addAsync(1L).get();
@@ -117,8 +116,7 @@ public abstract class CardinalityEstimatorAbstractTest
     }
 
     @Test()
-    public void addCustomObjectRegisteredAsync()
-            throws Exception {
+    public void addCustomObjectRegisteredAsync() throws Exception {
         assumeTrue(config != null);
 
         assertEquals(0L, estimator.estimate());
@@ -136,6 +134,7 @@ public abstract class CardinalityEstimatorAbstractTest
     }
 
     private class CustomObject {
+
         private final int x;
         private final int y;
 
@@ -157,17 +156,14 @@ public abstract class CardinalityEstimatorAbstractTest
         }
 
         @Override
-        public void write(ObjectDataOutput out, CustomObject object)
-                throws IOException {
+        public void write(ObjectDataOutput out, CustomObject object) throws IOException {
             out.writeLong((object.x << Bits.INT_SIZE_IN_BYTES) | object.y);
         }
 
         @Override
-        public CustomObject read(ObjectDataInput in)
-                throws IOException {
-            // Not needed
+        public CustomObject read(ObjectDataInput in) throws IOException {
+            // not needed
             throw new UnsupportedOperationException();
         }
     }
-
 }

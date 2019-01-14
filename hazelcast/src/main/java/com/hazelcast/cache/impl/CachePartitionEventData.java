@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,22 @@
 
 package com.hazelcast.cache.impl;
 
+import com.hazelcast.cache.CacheEventType;
 import com.hazelcast.core.Member;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
+import com.hazelcast.nio.serialization.BinaryInterface;
 
 import java.io.IOException;
 
+@BinaryInterface
 public class CachePartitionEventData extends CacheEventDataImpl implements CacheEventData {
 
     private int partitionId;
     private Member member;
+
+    public CachePartitionEventData() {
+    }
 
     public CachePartitionEventData(String name, int partitionId, Member member) {
         super(name, CacheEventType.PARTITION_LOST, null, null, null, false);
@@ -94,5 +100,10 @@ public class CachePartitionEventData extends CacheEventDataImpl implements Cache
         result = 31 * result + partitionId;
         result = 31 * result + (member != null ? member.hashCode() : 0);
         return result;
+    }
+
+    @Override
+    public int getId() {
+        return CacheDataSerializerHook.CACHE_PARTITION_EVENT_DATA;
     }
 }

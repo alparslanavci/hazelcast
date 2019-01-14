@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,9 +25,10 @@ import com.hazelcast.logging.ILogger;
 import com.hazelcast.nio.Address;
 import com.hazelcast.nio.BufferObjectDataInput;
 import com.hazelcast.nio.BufferObjectDataOutput;
+import com.hazelcast.nio.NodeIOService;
 import com.hazelcast.nio.Packet;
 import com.hazelcast.nio.serialization.HazelcastSerializationException;
-import com.hazelcast.util.EmptyStatement;
+import com.hazelcast.util.ByteArrayProcessor;
 
 import java.io.EOFException;
 import java.io.IOException;
@@ -35,10 +36,14 @@ import java.net.DatagramPacket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.MulticastSocket;
+import java.security.GeneralSecurityException;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+
+import static com.hazelcast.util.EmptyStatement.ignore;
 
 public final class MulticastService implements Runnable {
 
@@ -47,6 +52,7 @@ public final class MulticastService implements Runnable {
     private static final int SOCKET_BUFFER_SIZE = 64 * 1024;
     private static final int SOCKET_TIMEOUT = 1000;
     private static final int SHUTDOWN_TIMEOUT_SECONDS = 5;
+    private static final int JOIN_SERIALIZATION_ERROR_SUPPRESSION_MILLIS = 60000;
 
     private final List<MulticastListener> listeners = new CopyOnWriteArrayList<MulticastListener>();
     private final Object sendLock = new Object();
@@ -58,20 +64,35 @@ public final class MulticastService implements Runnable {
     private final BufferObjectDataOutput sendOutput;
     private final DatagramPacket datagramPacketSend;
     private final DatagramPacket datagramPacketReceive;
+    private final JoinMessageTrustChecker joinMessageTrustChecker;
 
+    private final ByteArrayProcessor inputProcessor;
+    private final ByteArrayProcessor outputProcessor;
+
+    private long lastLoggedJoinSerializationFailure;
     private volatile boolean running = true;
 
-    private MulticastService(Node node, MulticastSocket multicastSocket) throws Exception {
+    private MulticastService(Node node, MulticastSocket multicastSocket)
+            throws Exception {
         this.logger = node.getLogger(MulticastService.class.getName());
         this.node = node;
         this.multicastSocket = multicastSocket;
 
+        NodeIOService nodeIOService = new NodeIOService(node, node.nodeEngine);
+        this.inputProcessor = node.getNodeExtension().createMulticastInputProcessor(nodeIOService);
+        this.outputProcessor = node.getNodeExtension().createMulticastOutputProcessor(nodeIOService);
+
         this.sendOutput = node.getSerializationService().createObjectDataOutput(SEND_OUTPUT_SIZE);
+
         Config config = node.getConfig();
         MulticastConfig multicastConfig = config.getNetworkConfig().getJoin().getMulticastConfig();
         this.datagramPacketSend = new DatagramPacket(new byte[0], 0, InetAddress.getByName(multicastConfig.getMulticastGroup()),
                 multicastConfig.getMulticastPort());
         this.datagramPacketReceive = new DatagramPacket(new byte[DATAGRAM_BUFFER_SIZE], DATAGRAM_BUFFER_SIZE);
+
+        Set<String> trustedInterfaces = multicastConfig.getTrustedInterfaces();
+        ILogger logger = node.getLogger(JoinMessageTrustChecker.class);
+        joinMessageTrustChecker = new JoinMessageTrustChecker(trustedInterfaces, logger);
     }
 
     public static MulticastService createMulticastService(Address bindAddress, Node node, Config config, ILogger logger) {
@@ -96,6 +117,13 @@ public final class MulticastService implements Runnable {
                 } else if (multicastConfig.isLoopbackModeEnabled()) {
                     multicastSocket.setLoopbackMode(true);
                     multicastSocket.setInterface(bindAddress.getInetAddress());
+                } else {
+                    // If LoopBack is not enabled but its the selected interface from the given
+                    // bind address, then we rely on Default Network Interface.
+                    logger.warning("Hazelcast is bound to " + bindAddress.getHost() + " and loop-back mode is disabled in "
+                            + "the configuration. This could cause multicast auto-discovery issues and render it unable to work. "
+                            + "Check you network connectivity, try to enable the loopback mode and/or "
+                            + "force -Djava.net.preferIPv4Stack=true on your JVM.");
                 }
             } catch (Exception e) {
                 logger.warning(e);
@@ -133,7 +161,7 @@ public final class MulticastService implements Runnable {
             try {
                 multicastSocket.close();
             } catch (Throwable ignored) {
-                EmptyStatement.ignore(ignored);
+                ignore(ignored);
             }
             running = false;
             if (!stopLatch.await(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
@@ -151,7 +179,7 @@ public final class MulticastService implements Runnable {
             datagramPacketReceive.setData(new byte[0]);
             datagramPacketSend.setData(new byte[0]);
         } catch (Throwable ignored) {
-            EmptyStatement.ignore(ignored);
+            ignore(ignored);
         }
         stopLatch.countDown();
     }
@@ -163,7 +191,7 @@ public final class MulticastService implements Runnable {
             while (running) {
                 try {
                     final JoinMessage joinMessage = receive();
-                    if (joinMessage != null) {
+                    if (joinMessage != null && joinMessageTrustChecker.isTrusted(joinMessage)) {
                         for (MulticastListener multicastListener : listeners) {
                             try {
                                 multicastListener.onMessage(joinMessage);
@@ -193,12 +221,19 @@ public final class MulticastService implements Runnable {
             try {
                 final byte[] data = datagramPacketReceive.getData();
                 final int offset = datagramPacketReceive.getOffset();
-                final BufferObjectDataInput input = node.getSerializationService().createObjectDataInput(data);
-                input.position(offset);
+                final int length = datagramPacketReceive.getLength();
+
+                final byte[] processed = inputProcessor != null ? inputProcessor.process(data, offset, length) : data;
+                final BufferObjectDataInput input = node.getSerializationService().createObjectDataInput(processed);
+                if (inputProcessor == null) {
+                    // If pre-processed the offset is already taken into account.
+                    input.position(offset);
+                }
 
                 final byte packetVersion = input.readByte();
                 if (packetVersion != Packet.VERSION) {
-                    logger.warning("Received a JoinRequest with a different packet version! This -> "
+                    logger.warning("Received a JoinRequest with a different packet version, or encrypted. "
+                            + "Verify that the sender Node, doesn't have symmetric-encryption on. This -> "
                             + Packet.VERSION + ", Incoming -> " + packetVersion
                             + ", Sender -> " + datagramPacketReceive.getAddress());
                     return null;
@@ -210,7 +245,19 @@ public final class MulticastService implements Runnable {
                 }
             } catch (Exception e) {
                 if (e instanceof EOFException || e instanceof HazelcastSerializationException) {
-                    logger.warning("Received data format is invalid. (An old version of Hazelcast may be running here.)", e);
+                    long now = System.currentTimeMillis();
+                    if (now - lastLoggedJoinSerializationFailure > JOIN_SERIALIZATION_ERROR_SUPPRESSION_MILLIS) {
+                        lastLoggedJoinSerializationFailure = now;
+                        logger.warning("Received a JoinRequest with an incompatible binary-format. "
+                                + "An old version of Hazelcast may be using the same multicast discovery port. "
+                                + "Are you running multiple Hazelcast clusters on this host? "
+                                + "(This message will be suppressed for 60 seconds). ");
+                    }
+                } else if (e instanceof GeneralSecurityException) {
+                    logger.warning("Received a JoinRequest with an incompatible encoding. "
+                            + "Symmetric-encryption is enabled on this node, the remote node either doesn't have it on, "
+                            + "or it uses different cipher."
+                            + "(This message will be suppressed for 60 seconds). ");
                 } else {
                     throw e;
                 }
@@ -231,7 +278,8 @@ public final class MulticastService implements Runnable {
             try {
                 out.writeByte(Packet.VERSION);
                 out.writeObject(joinMessage);
-                datagramPacketSend.setData(out.toByteArray());
+                byte[] processed = outputProcessor != null ? outputProcessor.process(out.toByteArray()) : out.toByteArray();
+                datagramPacketSend.setData(processed);
                 multicastSocket.send(datagramPacketSend);
                 out.clear();
             } catch (IOException e) {

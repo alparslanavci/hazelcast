@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.hazelcast.internal.serialization.impl;
 
 import com.hazelcast.internal.serialization.InternalSerializationService;
@@ -35,20 +51,20 @@ import static org.mockito.Mockito.verify;
 @Category({QuickTest.class, ParallelTest.class})
 public class ByteArrayObjectDataInputTest extends HazelcastTestSupport {
 
-    final static byte[] INIT_DATA = new byte[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    static final byte[] INIT_DATA = new byte[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 
     protected InternalSerializationService mockSerializationService;
     protected ByteArrayObjectDataInput in;
     protected ByteOrder byteOrder;
 
     @Before
-    public void before() throws Exception {
+    public void before() {
         mockSerializationService = mock(InternalSerializationService.class);
         initDataInput();
     }
 
     @After
-    public void after() throws Exception {
+    public void after() {
         in.close();
     }
 
@@ -62,7 +78,7 @@ public class ByteArrayObjectDataInputTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testInit() throws Exception {
+    public void testInit() {
         in.init(INIT_DATA, 2);
         assertArrayEquals(INIT_DATA, in.data);
         assertEquals(INIT_DATA.length, in.size);
@@ -70,7 +86,7 @@ public class ByteArrayObjectDataInputTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testInit_null() throws Exception {
+    public void testInit_null() {
         in.init(null, 0);
         assertNull(in.data);
         assertEquals(0, in.size);
@@ -78,7 +94,7 @@ public class ByteArrayObjectDataInputTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testClear() throws Exception {
+    public void testClear() {
         in.clear();
         assertNull(in.data);
         assertEquals(0, in.size);
@@ -576,7 +592,7 @@ public class ByteArrayObjectDataInputTest extends HazelcastTestSupport {
         assertEquals(0xFFFF, unsigned);
     }
 
-    public void testReadUTF() throws Exception {
+    public void testReadUTF() {
         //EXTENDED TEST ELSEWHERE: StringSerializationTest
     }
 
@@ -606,7 +622,7 @@ public class ByteArrayObjectDataInputTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testSkip() throws Exception {
+    public void testSkip() {
         long s1 = in.skip(-1);
         long s2 = in.skip(Integer.MAX_VALUE);
         long s3 = in.skip(1);
@@ -617,7 +633,7 @@ public class ByteArrayObjectDataInputTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testSkipBytes() throws Exception {
+    public void testSkipBytes() {
         int s1 = in.skipBytes(-1);
         int s2 = in.skipBytes(1);
 
@@ -632,18 +648,18 @@ public class ByteArrayObjectDataInputTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testPosition() throws Exception {
+    public void testPosition() {
         assertEquals(0, in.position());
     }
 
     @Test
-    public void testPositionNewPos() throws Exception {
+    public void testPositionNewPos() {
         in.position(INIT_DATA.length - 1);
         assertEquals(INIT_DATA.length - 1, in.position());
     }
 
     @Test
-    public void testPositionNewPos_mark() throws Exception {
+    public void testPositionNewPos_mark() {
         in.position(INIT_DATA.length - 1);
         in.mark(0);
         int firstMarked = in.mark;
@@ -654,12 +670,12 @@ public class ByteArrayObjectDataInputTest extends HazelcastTestSupport {
     }
 
     @Test(expected = IllegalArgumentException.class)
-    public void testPositionNewPos_HighNewPos() throws Exception {
+    public void testPositionNewPos_HighNewPos() {
         in.position(INIT_DATA.length + 10);
     }
 
     @Test(expected = IllegalArgumentException.class)
-    public void testPositionNewPos_negativeNewPos() throws Exception {
+    public void testPositionNewPos_negativeNewPos() {
         in.position(-1);
     }
 
@@ -674,24 +690,24 @@ public class ByteArrayObjectDataInputTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testAvailable() throws Exception {
+    public void testAvailable() {
         assertEquals(in.size - in.pos, in.available());
     }
 
     @Test
-    public void testMarkSupported() throws Exception {
+    public void testMarkSupported() {
         assertTrue(in.markSupported());
     }
 
     @Test
-    public void testMark() throws Exception {
+    public void testMark() {
         in.position(1);
         in.mark(1);
         assertEquals(1, in.mark);
     }
 
     @Test
-    public void testReset() throws Exception {
+    public void testReset() {
         in.position(1);
         in.mark(1);
         in.reset();
@@ -699,21 +715,21 @@ public class ByteArrayObjectDataInputTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testClose() throws Exception {
+    public void testClose() {
         in.close();
         assertNull(in.data);
         assertNull(in.charBuffer);
     }
 
     @Test
-    public void testGetClassLoader() throws Exception {
+    public void testGetClassLoader() {
         in.getClassLoader();
         verify(mockSerializationService).getClassLoader();
 
     }
 
     @Test
-    public void testGetByteOrder() throws Exception {
+    public void testGetByteOrder() {
         ByteArrayObjectDataInput input = createDataInput(LITTLE_ENDIAN);
 
         assertEquals(LITTLE_ENDIAN, input.getByteOrder());
@@ -721,8 +737,7 @@ public class ByteArrayObjectDataInputTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testToString() throws Exception {
+    public void testToString() {
         assertNotNull(in.toString());
     }
-
-} 
+}

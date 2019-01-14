@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,15 +38,23 @@ public final class OperationAccessor {
     }
 
     /**
-     * Sets the callId for the Operation.
-     *
-     * @param op the Operator that is updated for its callId.
-     * @param callId the callId.
-     * @see Operation#setCallId(long)
-     * @see Operation#getCallId()
+     * Assigns the supplied call ID to the supplied operation, thereby activating it.
+     * Refer to Operation#setCallId(long) and Operation#getCallId() for detailed semantics.
      */
     public static void setCallId(Operation op, long callId) {
         op.setCallId(callId);
+    }
+
+    /**
+     * Marks the supplied operation as "not active". Refer to {@link Operation#deactivate()) for
+     * detailed semantics.
+     */
+    public static boolean deactivate(Operation op) {
+        return op.deactivate();
+    }
+
+    public static boolean hasActiveInvocation(Operation op) {
+        return op.isActive();
     }
 
     /**

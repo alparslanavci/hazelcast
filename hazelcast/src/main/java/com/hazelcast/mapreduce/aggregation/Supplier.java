@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import com.hazelcast.mapreduce.aggregation.impl.AcceptAllSupplier;
 import com.hazelcast.mapreduce.aggregation.impl.KeyPredicateSupplier;
 import com.hazelcast.mapreduce.aggregation.impl.PredicateSupplier;
 import com.hazelcast.query.Predicate;
-import com.hazelcast.spi.annotation.Beta;
 
 import java.io.Serializable;
 import java.util.Map;
@@ -66,8 +65,9 @@ import java.util.Map;
  * @param <ValueIn>  the input value type
  * @param <ValueOut> the supplied value type
  * @since 3.3
+ * @deprecated Use fast-aggregations {@link com.hazelcast.aggregation.Aggregator}
  */
-@Beta
+@Deprecated
 public abstract class Supplier<KeyIn, ValueIn, ValueOut>
         implements Serializable {
 

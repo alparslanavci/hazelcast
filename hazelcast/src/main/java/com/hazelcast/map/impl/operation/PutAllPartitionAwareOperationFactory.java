@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import java.util.Map;
 
 /**
  * Inserts the {@link MapEntries} for all partitions of a member via locally invoked {@link PutAllOperation}.
- * <p/>
+ * <p>
  * Used to reduce the number of remote invocations of an {@link com.hazelcast.core.IMap#putAll(Map)} call.
  */
 public class PutAllPartitionAwareOperationFactory extends PartitionAwareOperationFactory {
@@ -38,7 +38,6 @@ public class PutAllPartitionAwareOperationFactory extends PartitionAwareOperatio
     protected String name;
     protected MapEntries[] mapEntries;
 
-    @SuppressWarnings("unused")
     public PutAllPartitionAwareOperationFactory() {
     }
 
@@ -48,7 +47,6 @@ public class PutAllPartitionAwareOperationFactory extends PartitionAwareOperatio
         this.partitions = partitions;
         this.mapEntries = mapEntries;
     }
-
 
     @Override
     public Operation createPartitionOperation(int partitionId) {

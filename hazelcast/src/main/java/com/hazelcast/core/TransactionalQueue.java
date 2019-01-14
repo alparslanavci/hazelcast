@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,35 +23,40 @@ import java.util.concurrent.TimeUnit;
 /**
  * Transactional implementation of {@link BaseQueue}.
  *
+ * @param <E> the type of elements held in this collection
  * @see BaseQueue
  * @see IQueue
- * @param <E>
  */
 public interface TransactionalQueue<E> extends TransactionalObject, BaseQueue<E> {
 
     /**
      * {@inheritDoc}
      */
+    @Override
     boolean offer(E e);
 
     /**
      * {@inheritDoc}
      */
+    @Override
     boolean offer(E e, long timeout, TimeUnit unit) throws InterruptedException;
 
     /**
      * {@inheritDoc}
      */
+    @Override
     E take() throws InterruptedException;
 
     /**
      * {@inheritDoc}
      */
+    @Override
     E poll();
 
     /**
      * {@inheritDoc}
      */
+    @Override
     E poll(long timeout, TimeUnit unit) throws InterruptedException;
 
     /**
@@ -67,6 +72,6 @@ public interface TransactionalQueue<E> extends TransactionalObject, BaseQueue<E>
     /**
      * {@inheritDoc}
      */
+    @Override
     int size();
-
 }

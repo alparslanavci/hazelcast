@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,11 +20,13 @@ import com.hazelcast.config.CacheSimpleConfig.ExpiryPolicyFactoryConfig;
 import com.hazelcast.config.CacheSimpleConfig.ExpiryPolicyFactoryConfig.DurationConfig;
 import com.hazelcast.config.CacheSimpleConfig.ExpiryPolicyFactoryConfig.TimedExpiryPolicyFactoryConfig;
 import com.hazelcast.config.CacheSimpleConfig.ExpiryPolicyFactoryConfig.TimedExpiryPolicyFactoryConfig.ExpiryPolicyType;
+import com.hazelcast.config.EvictionConfig.MaxSizePolicy;
 import com.hazelcast.config.LoginModuleConfig.LoginModuleUsage;
 import com.hazelcast.config.PartitionGroupConfig.MemberGroupType;
 import com.hazelcast.config.PermissionConfig.PermissionType;
+import com.hazelcast.config.UserCodeDeploymentConfig.ClassCacheMode;
+import com.hazelcast.config.UserCodeDeploymentConfig.ProviderMode;
 import com.hazelcast.core.HazelcastException;
-import com.hazelcast.internal.eviction.impl.EvictionConfigHelper;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
 import com.hazelcast.map.eviction.MapEvictionPolicy;
@@ -52,14 +54,25 @@ import java.net.URL;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import static com.hazelcast.config.AliasedDiscoveryConfigUtils.getConfigByTag;
+import static com.hazelcast.config.JobTrackerConfig.DEFAULT_COMMUNICATE_STATS;
 import static com.hazelcast.config.MapStoreConfig.InitialLoadMode;
+import static com.hazelcast.config.XmlElements.ATOMIC_LONG;
+import static com.hazelcast.config.XmlElements.ATOMIC_REFERENCE;
 import static com.hazelcast.config.XmlElements.CACHE;
+import static com.hazelcast.config.XmlElements.CARDINALITY_ESTIMATOR;
+import static com.hazelcast.config.XmlElements.COUNT_DOWN_LATCH;
+import static com.hazelcast.config.XmlElements.CRDT_REPLICATION;
+import static com.hazelcast.config.XmlElements.DURABLE_EXECUTOR_SERVICE;
+import static com.hazelcast.config.XmlElements.EVENT_JOURNAL;
 import static com.hazelcast.config.XmlElements.EXECUTOR_SERVICE;
+import static com.hazelcast.config.XmlElements.FLAKE_ID_GENERATOR;
 import static com.hazelcast.config.XmlElements.GROUP;
 import static com.hazelcast.config.XmlElements.HOT_RESTART_PERSISTENCE;
 import static com.hazelcast.config.XmlElements.IMPORT;
@@ -69,27 +82,35 @@ import static com.hazelcast.config.XmlElements.LICENSE_KEY;
 import static com.hazelcast.config.XmlElements.LIST;
 import static com.hazelcast.config.XmlElements.LISTENERS;
 import static com.hazelcast.config.XmlElements.LITE_MEMBER;
+import static com.hazelcast.config.XmlElements.LOCK;
 import static com.hazelcast.config.XmlElements.MANAGEMENT_CENTER;
 import static com.hazelcast.config.XmlElements.MAP;
 import static com.hazelcast.config.XmlElements.MEMBER_ATTRIBUTES;
+import static com.hazelcast.config.XmlElements.MERKLE_TREE;
 import static com.hazelcast.config.XmlElements.MULTIMAP;
 import static com.hazelcast.config.XmlElements.NATIVE_MEMORY;
 import static com.hazelcast.config.XmlElements.NETWORK;
 import static com.hazelcast.config.XmlElements.PARTITION_GROUP;
+import static com.hazelcast.config.XmlElements.PN_COUNTER;
 import static com.hazelcast.config.XmlElements.PROPERTIES;
 import static com.hazelcast.config.XmlElements.QUEUE;
 import static com.hazelcast.config.XmlElements.QUORUM;
 import static com.hazelcast.config.XmlElements.RELIABLE_TOPIC;
 import static com.hazelcast.config.XmlElements.REPLICATED_MAP;
 import static com.hazelcast.config.XmlElements.RINGBUFFER;
+import static com.hazelcast.config.XmlElements.SCHEDULED_EXECUTOR_SERVICE;
 import static com.hazelcast.config.XmlElements.SECURITY;
 import static com.hazelcast.config.XmlElements.SEMAPHORE;
 import static com.hazelcast.config.XmlElements.SERIALIZATION;
 import static com.hazelcast.config.XmlElements.SERVICES;
 import static com.hazelcast.config.XmlElements.SET;
 import static com.hazelcast.config.XmlElements.TOPIC;
+import static com.hazelcast.config.XmlElements.USER_CODE_DEPLOYMENT;
 import static com.hazelcast.config.XmlElements.WAN_REPLICATION;
 import static com.hazelcast.config.XmlElements.canOccurMultipleTimes;
+import static com.hazelcast.instance.BuildInfoProvider.HAZELCAST_INTERNAL_OVERRIDE_VERSION;
+import static com.hazelcast.internal.config.ConfigValidator.checkCacheConfig;
+import static com.hazelcast.internal.config.ConfigValidator.checkEvictionConfig;
 import static com.hazelcast.util.Preconditions.checkHasText;
 import static com.hazelcast.util.Preconditions.checkNotNull;
 import static com.hazelcast.util.StringUtil.LINE_SEPARATOR;
@@ -105,8 +126,6 @@ import static java.lang.Long.parseLong;
  */
 public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBuilder {
 
-    private static final int THOUSAND_FACTOR = 5;
-
     private static final ILogger LOGGER = Logger.getLogger(XmlConfigBuilder.class);
 
     private final Set<String> occurrenceSet = new HashSet<String>();
@@ -121,7 +140,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
      * Constructs a XmlConfigBuilder that reads from the provided XML file.
      *
      * @param xmlFileName the name of the XML file that the XmlConfigBuilder reads from
-     * @throws FileNotFoundException if the file can't be found.
+     * @throws FileNotFoundException if the file can't be found
      */
     public XmlConfigBuilder(String xmlFileName) throws FileNotFoundException {
         this(new FileInputStream(xmlFileName));
@@ -131,8 +150,8 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
     /**
      * Constructs a XmlConfigBuilder that reads from the given InputStream.
      *
-     * @param inputStream the InputStream containing the XML configuration.
-     * @throws IllegalArgumentException if inputStream is null.
+     * @param inputStream the InputStream containing the XML configuration
+     * @throws IllegalArgumentException if inputStream is {@code null}
      */
     public XmlConfigBuilder(InputStream inputStream) {
         if (inputStream == null) {
@@ -166,7 +185,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
     /**
      * Gets the current used properties. Can be null if no properties are set.
      *
-     * @return the current used properties.
+     * @return the current used properties
      * @see #setProperties(java.util.Properties)
      */
     @Override
@@ -176,10 +195,10 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
 
     /**
      * Sets the used properties. Can be null if no properties should be used.
-     * <p/>
+     * <p>
      * Properties are used to resolve ${variable} occurrences in the XML file.
      *
-     * @param properties the new properties.
+     * @param properties the new properties
      * @return the XmlConfigBuilder
      */
     public XmlConfigBuilder setProperties(Properties properties) {
@@ -212,14 +231,31 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         this.config = config;
         Document doc = parse(in);
         Element root = doc.getDocumentElement();
+        checkRootElement(root);
         try {
             root.getTextContent();
         } catch (Throwable e) {
             domLevel3 = false;
         }
         process(root);
-        schemaValidation(root.getOwnerDocument());
+        if (shouldValidateTheSchema()) {
+            schemaValidation(root.getOwnerDocument());
+        }
         handleConfig(root);
+    }
+
+    private void checkRootElement(Element root) {
+        String rootNodeName = root.getNodeName();
+        if (!XmlElements.HAZELCAST.isEqual(rootNodeName)) {
+            throw new InvalidConfigurationException("Invalid root element in xml configuration!"
+                    + " Expected: <" + XmlElements.HAZELCAST.name + ">, Actual: <" + rootNodeName + ">.");
+        }
+    }
+
+    private boolean shouldValidateTheSchema() {
+        // in case of overridden Hazelcast version there may be no schema with that version
+        // (this feature is used only in Simulator testing)
+        return System.getProperty(HAZELCAST_INTERNAL_OVERRIDE_VERSION) == null;
     }
 
     @Override
@@ -287,6 +323,14 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             handleWanReplication(node);
         } else if (EXECUTOR_SERVICE.isEqual(nodeName)) {
             handleExecutor(node);
+        } else if (DURABLE_EXECUTOR_SERVICE.isEqual(nodeName)) {
+            handleDurableExecutor(node);
+        } else if (SCHEDULED_EXECUTOR_SERVICE.isEqual(nodeName)) {
+            handleScheduledExecutor(node);
+        } else if (EVENT_JOURNAL.isEqual(nodeName)) {
+            handleEventJournal(node);
+        } else if (MERKLE_TREE.isEqual(nodeName)) {
+            handleMerkleTree(node);
         } else if (SERVICES.isEqual(nodeName)) {
             handleServices(node);
         } else if (QUEUE.isEqual(nodeName)) {
@@ -313,8 +357,16 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             handleJobTracker(node);
         } else if (SEMAPHORE.isEqual(nodeName)) {
             handleSemaphore(node);
+        } else if (LOCK.isEqual(nodeName)) {
+            handleLock(node);
         } else if (RINGBUFFER.isEqual(nodeName)) {
             handleRingbuffer(node);
+        } else if (ATOMIC_LONG.isEqual(nodeName)) {
+            handleAtomicLong(node);
+        } else if (ATOMIC_REFERENCE.isEqual(nodeName)) {
+            handleAtomicReference(node);
+        } else if (COUNT_DOWN_LATCH.isEqual(nodeName)) {
+            handleCountDownLatchConfig(node);
         } else if (LISTENERS.isEqual(nodeName)) {
             handleListeners(node);
         } else if (PARTITION_GROUP.isEqual(nodeName)) {
@@ -335,6 +387,16 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             handleLiteMember(node);
         } else if (HOT_RESTART_PERSISTENCE.isEqual(nodeName)) {
             handleHotRestartPersistence(node);
+        } else if (USER_CODE_DEPLOYMENT.isEqual(nodeName)) {
+            handleUserCodeDeployment(node);
+        } else if (CARDINALITY_ESTIMATOR.isEqual(nodeName)) {
+            handleCardinalityEstimator(node);
+        } else if (FLAKE_ID_GENERATOR.isEqual(nodeName)) {
+            handleFlakeIdGenerator(node);
+        } else if (CRDT_REPLICATION.isEqual(nodeName)) {
+            handleCRDTReplication(node);
+        } else if (PN_COUNTER.isEqual(nodeName)) {
+            handlePNCounter(node);
         } else {
             return true;
         }
@@ -349,35 +411,93 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         config.setInstanceName(instanceName);
     }
 
-    private void handleHotRestartPersistence(Node hrRoot) {
-        HotRestartPersistenceConfig hrConfig = new HotRestartPersistenceConfig();
-        Node attrEnabled = hrRoot.getAttributes().getNamedItem("enabled");
+    private void handleUserCodeDeployment(Node dcRoot) {
+        UserCodeDeploymentConfig dcConfig = new UserCodeDeploymentConfig();
+        Node attrEnabled = dcRoot.getAttributes().getNamedItem("enabled");
         boolean enabled = getBooleanValue(getTextContent(attrEnabled));
-        hrConfig.setEnabled(enabled);
+        dcConfig.setEnabled(enabled);
 
-        final String parallelismName = "parallelism";
-        final String validationTimeoutName = "validation-timeout-seconds";
-        final String dataLoadTimeoutName = "data-load-timeout-seconds";
+        String classCacheModeName = "class-cache-mode";
+        String providerModeName = "provider-mode";
+        String blacklistPrefixesName = "blacklist-prefixes";
+        String whitelistPrefixesName = "whitelist-prefixes";
+        String providerFilterName = "provider-filter";
+
+        for (Node n : childElements(dcRoot)) {
+            String name = cleanNodeName(n);
+            if (classCacheModeName.equals(name)) {
+                String value = getTextContent(n);
+                ClassCacheMode classCacheMode = ClassCacheMode.valueOf(value);
+                dcConfig.setClassCacheMode(classCacheMode);
+            } else if (providerModeName.equals(name)) {
+                String value = getTextContent(n);
+                ProviderMode providerMode = ProviderMode.valueOf(value);
+                dcConfig.setProviderMode(providerMode);
+            } else if (blacklistPrefixesName.equals(name)) {
+                String value = getTextContent(n);
+                dcConfig.setBlacklistedPrefixes(value);
+            } else if (whitelistPrefixesName.equals(name)) {
+                String value = getTextContent(n);
+                dcConfig.setWhitelistedPrefixes(value);
+            } else if (providerFilterName.equals(name)) {
+                String value = getTextContent(n);
+                dcConfig.setProviderFilter(value);
+            }
+        }
+        config.setUserCodeDeploymentConfig(dcConfig);
+    }
+
+    private void handleHotRestartPersistence(Node hrRoot) {
+        HotRestartPersistenceConfig hrConfig = new HotRestartPersistenceConfig()
+                .setEnabled(getBooleanValue(getAttribute(hrRoot, "enabled")));
+
+        String parallelismName = "parallelism";
+        String validationTimeoutName = "validation-timeout-seconds";
+        String dataLoadTimeoutName = "data-load-timeout-seconds";
+        String clusterDataRecoveryPolicyName = "cluster-data-recovery-policy";
 
         for (Node n : childElements(hrRoot)) {
             String name = cleanNodeName(n);
             if ("base-dir".equals(name)) {
                 hrConfig.setBaseDir(new File(getTextContent(n)).getAbsoluteFile());
+            } else if ("backup-dir".equals(name)) {
+                hrConfig.setBackupDir(new File(getTextContent(n)).getAbsoluteFile());
             } else if (parallelismName.equals(name)) {
                 hrConfig.setParallelism(getIntegerValue(parallelismName, getTextContent(n)));
             } else if (validationTimeoutName.equals(name)) {
                 hrConfig.setValidationTimeoutSeconds(getIntegerValue(validationTimeoutName, getTextContent(n)));
             } else if (dataLoadTimeoutName.equals(name)) {
                 hrConfig.setDataLoadTimeoutSeconds(getIntegerValue(dataLoadTimeoutName, getTextContent(n)));
+            } else if (clusterDataRecoveryPolicyName.equals(name)) {
+                hrConfig.setClusterDataRecoveryPolicy(HotRestartClusterDataRecoveryPolicy
+                        .valueOf(upperCaseInternal(getTextContent(n))));
             }
         }
         config.setHotRestartPersistenceConfig(hrConfig);
     }
 
+    private void handleCRDTReplication(Node root) {
+        final CRDTReplicationConfig replicationConfig = new CRDTReplicationConfig();
+        final String replicationPeriodMillisName = "replication-period-millis";
+        final String maxConcurrentReplicationTargetsName = "max-concurrent-replication-targets";
+
+        for (Node n : childElements(root)) {
+            final String name = cleanNodeName(n);
+            if (replicationPeriodMillisName.equals(name)) {
+                replicationConfig.setReplicationPeriodMillis(
+                        getIntegerValue(replicationPeriodMillisName, getTextContent(n)));
+            } else if (maxConcurrentReplicationTargetsName.equals(name)) {
+                replicationConfig.setMaxConcurrentReplicationTargets(
+                        getIntegerValue(maxConcurrentReplicationTargetsName, getTextContent(n)));
+            }
+        }
+        this.config.setCRDTReplicationConfig(replicationConfig);
+    }
+
     private void handleLiteMember(Node node) {
         Node attrEnabled = node.getAttributes().getNamedItem("enabled");
         boolean liteMember = attrEnabled != null && getBooleanValue(getTextContent(attrEnabled));
-        this.config.setLiteMember(liteMember);
+        config.setLiteMember(liteMember);
     }
 
     private void handleQuorum(Node node) {
@@ -386,6 +506,8 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         quorumConfig.setName(name);
         Node attrEnabled = node.getAttributes().getNamedItem("enabled");
         boolean enabled = attrEnabled != null && getBooleanValue(getTextContent(attrEnabled));
+        // probabilistic-quorum and recently-active-quorum quorum configs are constructed via QuorumConfigBuilder
+        QuorumConfigBuilder quorumConfigBuilder = null;
         quorumConfig.setEnabled(enabled);
         for (Node n : childElements(node)) {
             String value = getTextContent(n).trim();
@@ -403,11 +525,64 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 quorumConfig.setType(QuorumType.valueOf(upperCaseInternal(value)));
             } else if ("quorum-function-class-name".equals(nodeName)) {
                 quorumConfig.setQuorumFunctionClassName(value);
+            } else if ("recently-active-quorum".equals(nodeName)) {
+                quorumConfigBuilder = handleRecentlyActiveQuorum(name, n, quorumConfig.getSize());
+            } else if ("probabilistic-quorum".equals(nodeName)) {
+                quorumConfigBuilder = handleProbabilisticQuorum(name, n, quorumConfig.getSize());
             }
         }
-        this.config.addQuorumConfig(quorumConfig);
+        if (quorumConfigBuilder != null) {
+            boolean quorumFunctionDefinedByClassName = !isNullOrEmpty(quorumConfig.getQuorumFunctionClassName());
+            if (quorumFunctionDefinedByClassName) {
+                throw new ConfigurationException("A quorum cannot simultaneously define probabilistic-quorum or "
+                        + "recently-active-quorum and a quorum function class name.");
+            }
+            // ensure parsed attributes are reflected in constructed quorum config
+            QuorumConfig constructedConfig = quorumConfigBuilder.build();
+            constructedConfig.setSize(quorumConfig.getSize());
+            constructedConfig.setType(quorumConfig.getType());
+            constructedConfig.setListenerConfigs(quorumConfig.getListenerConfigs());
+            quorumConfig = constructedConfig;
+        }
+        config.addQuorumConfig(quorumConfig);
     }
 
+    private QuorumConfigBuilder handleRecentlyActiveQuorum(String name, Node node, int quorumSize) {
+        QuorumConfigBuilder quorumConfigBuilder;
+        int heartbeatToleranceMillis = getIntegerValue("heartbeat-tolerance-millis",
+                getAttribute(node, "heartbeat-tolerance-millis"),
+                RecentlyActiveQuorumConfigBuilder.DEFAULT_HEARTBEAT_TOLERANCE_MILLIS);
+        quorumConfigBuilder = QuorumConfig.newRecentlyActiveQuorumConfigBuilder(name,
+                quorumSize,
+                heartbeatToleranceMillis);
+        return quorumConfigBuilder;
+    }
+
+    private QuorumConfigBuilder handleProbabilisticQuorum(String name, Node node, int quorumSize) {
+        QuorumConfigBuilder quorumConfigBuilder;
+        long acceptableHeartPause = getLongValue("acceptable-heartbeat-pause-millis",
+                getAttribute(node, "acceptable-heartbeat-pause-millis"),
+                ProbabilisticQuorumConfigBuilder.DEFAULT_HEARTBEAT_PAUSE_MILLIS);
+        double threshold = getDoubleValue("suspicion-threshold",
+                getAttribute(node, "suspicion-threshold"),
+                ProbabilisticQuorumConfigBuilder.DEFAULT_PHI_THRESHOLD);
+        int maxSampleSize = getIntegerValue("max-sample-size",
+                getAttribute(node, "max-sample-size"),
+                ProbabilisticQuorumConfigBuilder.DEFAULT_SAMPLE_SIZE);
+        long minStdDeviation = getLongValue("min-std-deviation-millis",
+                getAttribute(node, "min-std-deviation-millis"),
+                ProbabilisticQuorumConfigBuilder.DEFAULT_MIN_STD_DEVIATION);
+        long heartbeatIntervalMillis = getLongValue("heartbeat-interval-millis",
+                getAttribute(node, "heartbeat-interval-millis"),
+                ProbabilisticQuorumConfigBuilder.DEFAULT_HEARTBEAT_INTERVAL_MILLIS);
+        quorumConfigBuilder = QuorumConfig.newProbabilisticQuorumConfigBuilder(name, quorumSize)
+                .withAcceptableHeartbeatPauseMillis(acceptableHeartPause)
+                .withSuspicionThreshold(threshold)
+                .withHeartbeatIntervalMillis(heartbeatIntervalMillis)
+                .withMinStdDeviationMillis(minStdDeviation)
+                .withMaxSampleSize(maxSampleSize);
+        return quorumConfigBuilder;
+    }
 
     private void handleServices(Node node) {
         Node attDefaults = node.getAttributes().getNamedItem("enable-defaults");
@@ -453,7 +628,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         }
     }
 
-    private void handleWanReplication(Node node) throws Exception {
+    private void handleWanReplication(Node node) {
         Node attName = node.getAttributes().getNamedItem("name");
         String name = getTextContent(attName);
 
@@ -465,6 +640,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             if ("wan-publisher".equals(nodeName)) {
                 WanPublisherConfig publisherConfig = new WanPublisherConfig();
                 publisherConfig.setGroupName(getAttribute(nodeTarget, "group-name"));
+                publisherConfig.setPublisherId(getAttribute(nodeTarget, "publisher-id"));
                 for (Node targetChild : childElements(nodeTarget)) {
                     handleWanPublisherConfig(publisherConfig, targetChild);
                 }
@@ -488,11 +664,32 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         } else if ("queue-full-behavior".equals(targetChildName)) {
             String queueFullBehavior = getTextContent(targetChild);
             publisherConfig.setQueueFullBehavior(WANQueueFullBehavior.valueOf(upperCaseInternal(queueFullBehavior)));
+        } else if ("initial-publisher-state".equals(targetChildName)) {
+            String initialPublisherState = getTextContent(targetChild);
+            publisherConfig.setInitialPublisherState(
+                    WanPublisherState.valueOf(upperCaseInternal(initialPublisherState)));
         } else if ("queue-capacity".equals(targetChildName)) {
             int queueCapacity = getIntegerValue("queue-capacity", getTextContent(targetChild));
             publisherConfig.setQueueCapacity(queueCapacity);
         } else if ("properties".equals(targetChildName)) {
             fillProperties(targetChild, publisherConfig.getProperties());
+        } else if (AliasedDiscoveryConfigUtils.supports(targetChildName)) {
+            handleAliasedDiscoveryStrategy(publisherConfig, targetChild, targetChildName);
+        } else if ("discovery-strategies".equals(targetChildName)) {
+            handleDiscoveryStrategies(publisherConfig.getDiscoveryConfig(), targetChild);
+        } else if ("wan-sync".equals(targetChildName)) {
+            handleWanSync(publisherConfig.getWanSyncConfig(), targetChild);
+        }
+    }
+
+    private void handleWanSync(WanSyncConfig wanSyncConfig, Node node) {
+        for (Node child : childElements(node)) {
+            String nodeName = cleanNodeName(child);
+            if ("consistency-check-strategy".equals(nodeName)) {
+                String strategy = getTextContent(child);
+                wanSyncConfig.setConsistencyCheckStrategy(
+                        ConsistencyCheckStrategy.valueOf(upperCaseInternal(strategy)));
+            }
         }
     }
 
@@ -502,6 +699,8 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             consumerConfig.setClassName(getTextContent(targetChild));
         } else if ("properties".equals(targetChildName)) {
             fillProperties(targetChild, consumerConfig.getProperties());
+        } else if ("persist-wan-replicated-data".equals(targetChildName)) {
+            consumerConfig.setPersistWanReplicatedData(getBooleanValue(getTextContent(targetChild)));
         }
     }
 
@@ -528,6 +727,10 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 handleSSLConfig(child);
             } else if ("socket-interceptor".equals(nodeName)) {
                 handleSocketInterceptorConfig(child);
+            } else if ("member-address-provider".equals(nodeName)) {
+                handleMemberAddressProvider(child);
+            } else if ("failure-detector".equals(nodeName)) {
+                handleFailureDetector(child);
             }
         }
     }
@@ -535,6 +738,81 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
     private void handleExecutor(Node node) throws Exception {
         ExecutorConfig executorConfig = new ExecutorConfig();
         handleViaReflection(node, config, executorConfig);
+    }
+
+    private void handleDurableExecutor(Node node) throws Exception {
+        DurableExecutorConfig durableExecutorConfig = new DurableExecutorConfig();
+        handleViaReflection(node, config, durableExecutorConfig);
+    }
+
+    private void handleScheduledExecutor(Node node) {
+        ScheduledExecutorConfig scheduledExecutorConfig = new ScheduledExecutorConfig();
+        scheduledExecutorConfig.setName(getTextContent(node.getAttributes().getNamedItem("name")));
+
+        for (Node child : childElements(node)) {
+            String nodeName = cleanNodeName(child);
+            if ("merge-policy".equals(nodeName)) {
+                scheduledExecutorConfig.setMergePolicyConfig(createMergePolicyConfig(child));
+            } else if ("capacity".equals(nodeName)) {
+                scheduledExecutorConfig.setCapacity(parseInt(getTextContent(child)));
+            } else if ("durability".equals(nodeName)) {
+                scheduledExecutorConfig.setDurability(parseInt(getTextContent(child)));
+            } else if ("pool-size".equals(nodeName)) {
+                scheduledExecutorConfig.setPoolSize(parseInt(getTextContent(child)));
+            } else if ("quorum-ref".equals(nodeName)) {
+                scheduledExecutorConfig.setQuorumName(getTextContent(child));
+            }
+        }
+
+        config.addScheduledExecutorConfig(scheduledExecutorConfig);
+    }
+
+
+    private void handleCardinalityEstimator(Node node) {
+        CardinalityEstimatorConfig cardinalityEstimatorConfig = new CardinalityEstimatorConfig();
+        cardinalityEstimatorConfig.setName(getTextContent(node.getAttributes().getNamedItem("name")));
+
+        for (Node child : childElements(node)) {
+            String nodeName = cleanNodeName(child);
+            if ("merge-policy".equals(nodeName)) {
+                MergePolicyConfig mergePolicyConfig = createMergePolicyConfig(child);
+                cardinalityEstimatorConfig.setMergePolicyConfig(mergePolicyConfig);
+            } else if ("backup-count".equals(nodeName)) {
+                cardinalityEstimatorConfig.setBackupCount(parseInt(getTextContent(child)));
+            } else if ("async-backup-count".equals(nodeName)) {
+                cardinalityEstimatorConfig.setAsyncBackupCount(parseInt(getTextContent(child)));
+            } else if ("quorum-ref".equals(nodeName)) {
+                cardinalityEstimatorConfig.setQuorumName(getTextContent(child));
+            }
+        }
+
+        config.addCardinalityEstimatorConfig(cardinalityEstimatorConfig);
+    }
+
+    private void handlePNCounter(Node node) throws Exception {
+        PNCounterConfig pnCounterConfig = new PNCounterConfig();
+        handleViaReflection(node, config, pnCounterConfig);
+    }
+
+    private void handleFlakeIdGenerator(Node node) {
+        String name = getAttribute(node, "name");
+        FlakeIdGeneratorConfig generatorConfig = new FlakeIdGeneratorConfig(name);
+        for (Node child : childElements(node)) {
+            String nodeName = cleanNodeName(child);
+            String value = getTextContent(child).trim();
+            if ("prefetch-count".equals(nodeName)) {
+                generatorConfig.setPrefetchCount(Integer.parseInt(value));
+            } else if ("prefetch-validity-millis".equalsIgnoreCase(nodeName)) {
+                generatorConfig.setPrefetchValidityMillis(Long.parseLong(value));
+            } else if ("id-offset".equalsIgnoreCase(nodeName)) {
+                generatorConfig.setIdOffset(Long.parseLong(value));
+            } else if ("node-id-offset".equalsIgnoreCase(nodeName)) {
+                generatorConfig.setNodeIdOffset(Long.parseLong(value));
+            } else if ("statistics-enabled".equals(nodeName)) {
+                generatorConfig.setStatisticsEnabled(getBooleanValue(value));
+            }
+        }
+        config.addFlakeIdGeneratorConfig(generatorConfig);
     }
 
     private void handleGroup(Node node) {
@@ -550,10 +828,10 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
     }
 
     private void handleInterfaces(Node node) {
-        NamedNodeMap atts = node.getAttributes();
+        NamedNodeMap attributes = node.getAttributes();
         InterfacesConfig interfaces = config.getNetworkConfig().getInterfaces();
-        for (int a = 0; a < atts.getLength(); a++) {
-            Node att = atts.item(a);
+        for (int a = 0; a < attributes.getLength(); a++) {
+            Node att = attributes.item(a);
             if ("enabled".equals(att.getNodeName())) {
                 String value = att.getNodeValue();
                 interfaces.setEnabled(getBooleanValue(value));
@@ -568,10 +846,10 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
     }
 
     private void handleViaReflection(Node node, Object parent, Object child) throws Exception {
-        NamedNodeMap atts = node.getAttributes();
-        if (atts != null) {
-            for (int a = 0; a < atts.getLength(); a++) {
-                Node att = atts.item(a);
+        NamedNodeMap attributes = node.getAttributes();
+        if (attributes != null) {
+            for (int a = 0; a < attributes.getLength(); a++) {
+                Node att = attributes.item(a);
                 invokeSetter(child, att, att.getNodeValue());
             }
         }
@@ -640,6 +918,12 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
     }
 
     private static String toPropertyName(String element) {
+        // handle reflection incompatible reference properties
+        String refPropertyName = handleRefProperty(element);
+        if (refPropertyName != null) {
+            return refPropertyName;
+        }
+
         StringBuilder sb = new StringBuilder();
         char[] chars = element.toCharArray();
         boolean upper = true;
@@ -656,6 +940,13 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         return sb.toString();
     }
 
+    private static String handleRefProperty(String element) {
+        if (element.equals("quorum-ref")) {
+            return "QuorumName";
+        }
+        return null;
+    }
+
     private void handleJoin(Node node) {
         for (Node child : childElements(node)) {
             String name = cleanNodeName(child);
@@ -663,10 +954,10 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 handleMulticast(child);
             } else if ("tcp-ip".equals(name)) {
                 handleTcpIp(child);
-            } else if ("aws".equals(name)) {
-                handleAWS(child);
+            } else if (AliasedDiscoveryConfigUtils.supports(name)) {
+                handleAliasedDiscoveryStrategy(config.getNetworkConfig().getJoin(), child, name);
             } else if ("discovery-strategies".equals(name)) {
-                handleDiscoveryStrategies(child);
+                handleDiscoveryStrategies(config.getNetworkConfig().getJoin().getDiscoveryConfig(), child);
             }
         }
 
@@ -674,9 +965,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         joinConfig.verify();
     }
 
-    private void handleDiscoveryStrategies(Node node) {
-        JoinConfig join = config.getNetworkConfig().getJoin();
-        DiscoveryConfig discoveryConfig = join.getDiscoveryConfig();
+    private void handleDiscoveryStrategies(DiscoveryConfig discoveryConfig, Node node) {
         for (Node child : childElements(node)) {
             String name = cleanNodeName(child);
             if ("discovery-strategy".equals(name)) {
@@ -688,22 +977,20 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
     }
 
     private void handleDiscoveryNodeFilter(Node node, DiscoveryConfig discoveryConfig) {
-        NamedNodeMap atts = node.getAttributes();
-
-        Node att = atts.getNamedItem("class");
+        NamedNodeMap attributes = node.getAttributes();
+        Node att = attributes.getNamedItem("class");
         if (att != null) {
             discoveryConfig.setNodeFilterClass(getTextContent(att).trim());
         }
     }
 
     private void handleDiscoveryStrategy(Node node, DiscoveryConfig discoveryConfig) {
-        NamedNodeMap atts = node.getAttributes();
-
         boolean enabled = false;
         String clazz = null;
 
-        for (int a = 0; a < atts.getLength(); a++) {
-            Node att = atts.item(a);
+        NamedNodeMap attributes = node.getAttributes();
+        for (int a = 0; a < attributes.getLength(); a++) {
+            Node att = attributes.item(a);
             String value = getTextContent(att).trim();
             if ("enabled".equals(lowerCaseInternal(att.getNodeName()))) {
                 enabled = getBooleanValue(value);
@@ -727,47 +1014,40 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         discoveryConfig.addDiscoveryStrategyConfig(new DiscoveryStrategyConfig(clazz, properties));
     }
 
-    private void handleAWS(Node node) {
-        JoinConfig join = config.getNetworkConfig().getJoin();
-        NamedNodeMap atts = node.getAttributes();
-        AwsConfig awsConfig = join.getAwsConfig();
-        for (int a = 0; a < atts.getLength(); a++) {
-            Node att = atts.item(a);
+    private void handleAliasedDiscoveryStrategy(JoinConfig joinConfig, Node node, String tag) {
+        AliasedDiscoveryConfig aliasedDiscoveryConfig = AliasedDiscoveryConfigUtils.getConfigByTag(joinConfig, tag);
+        updateConfig(aliasedDiscoveryConfig, node);
+    }
+
+    private void handleAliasedDiscoveryStrategy(WanPublisherConfig publisherConfig, Node node, String tag) {
+        AliasedDiscoveryConfig aliasedDiscoveryConfig = getConfigByTag(publisherConfig, tag);
+        updateConfig(aliasedDiscoveryConfig, node);
+    }
+
+    private void updateConfig(AliasedDiscoveryConfig config, Node node) {
+        NamedNodeMap attributes = node.getAttributes();
+        for (int a = 0; a < attributes.getLength(); a++) {
+            Node att = attributes.item(a);
             String value = getTextContent(att).trim();
             if ("enabled".equals(lowerCaseInternal(att.getNodeName()))) {
-                awsConfig.setEnabled(getBooleanValue(value));
+                config.setEnabled(getBooleanValue(value));
             } else if (att.getNodeName().equals("connection-timeout-seconds")) {
-                awsConfig.setConnectionTimeoutSeconds(getIntegerValue("connection-timeout-seconds", value));
+                config.setProperty("connection-timeout-seconds", value);
             }
         }
         for (Node n : childElements(node)) {
+            String key = cleanNodeName(n);
             String value = getTextContent(n).trim();
-            if ("secret-key".equals(cleanNodeName(n))) {
-                awsConfig.setSecretKey(value);
-            } else if ("access-key".equals(cleanNodeName(n))) {
-                awsConfig.setAccessKey(value);
-            } else if ("region".equals(cleanNodeName(n))) {
-                awsConfig.setRegion(value);
-            } else if ("host-header".equals(cleanNodeName(n))) {
-                awsConfig.setHostHeader(value);
-            } else if ("security-group-name".equals(cleanNodeName(n))) {
-                awsConfig.setSecurityGroupName(value);
-            } else if ("tag-key".equals(cleanNodeName(n))) {
-                awsConfig.setTagKey(value);
-            } else if ("tag-value".equals(cleanNodeName(n))) {
-                awsConfig.setTagValue(value);
-            } else if ("iam-role".equals(cleanNodeName(n))) {
-                awsConfig.setIamRole(value);
-            }
+            config.setProperty(key, value);
         }
     }
 
     private void handleMulticast(Node node) {
         JoinConfig join = config.getNetworkConfig().getJoin();
-        NamedNodeMap atts = node.getAttributes();
         MulticastConfig multicastConfig = join.getMulticastConfig();
-        for (int a = 0; a < atts.getLength(); a++) {
-            Node att = atts.item(a);
+        NamedNodeMap attributes = node.getAttributes();
+        for (int a = 0; a < attributes.getLength(); a++) {
+            Node att = attributes.item(a);
             String value = getTextContent(att).trim();
             if ("enabled".equals(lowerCaseInternal(att.getNodeName()))) {
                 multicastConfig.setEnabled(getBooleanValue(value));
@@ -784,8 +1064,8 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             } else if ("multicast-timeout-seconds".equals(cleanNodeName(n))) {
                 multicastConfig.setMulticastTimeoutSeconds(parseInt(value));
             } else if ("multicast-time-to-live-seconds".equals(cleanNodeName(n))) {
-                //we need this line for the time being to prevent not reading the multicast-time-to-live-seconds property
-                //for more info see: https://github.com/hazelcast/hazelcast/issues/752
+                // we need this line for the time being to prevent not reading the multicast-time-to-live-seconds property
+                // for more info see: https://github.com/hazelcast/hazelcast/issues/752
                 multicastConfig.setMulticastTimeToLive(parseInt(value));
             } else if ("multicast-time-to-live".equals(cleanNodeName(n))) {
                 multicastConfig.setMulticastTimeToLive(parseInt(value));
@@ -800,11 +1080,11 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
     }
 
     private void handleTcpIp(Node node) {
-        NamedNodeMap atts = node.getAttributes();
+        NamedNodeMap attributes = node.getAttributes();
         JoinConfig join = config.getNetworkConfig().getJoin();
         TcpIpConfig tcpIpConfig = join.getTcpIpConfig();
-        for (int a = 0; a < atts.getLength(); a++) {
-            Node att = atts.item(a);
+        for (int a = 0; a < attributes.getLength(); a++) {
+            Node att = attributes.item(a);
             String value = getTextContent(att).trim();
             if (att.getNodeName().equals("enabled")) {
                 tcpIpConfig.setEnabled(getBooleanValue(value));
@@ -844,12 +1124,12 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
     private void handlePort(Node node) {
         String portStr = getTextContent(node).trim();
         NetworkConfig networkConfig = config.getNetworkConfig();
-        if (portStr != null && portStr.length() > 0) {
+        if (portStr.length() > 0) {
             networkConfig.setPort(parseInt(portStr));
         }
-        NamedNodeMap atts = node.getAttributes();
-        for (int a = 0; a < atts.getLength(); a++) {
-            Node att = atts.item(a);
+        NamedNodeMap attributes = node.getAttributes();
+        for (int a = 0; a < attributes.getLength(); a++) {
+            Node att = attributes.item(a);
             String value = getTextContent(att).trim();
 
             if ("auto-increment".equals(att.getNodeName())) {
@@ -870,6 +1150,20 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 networkConfig.addOutboundPortDefinition(value);
             }
         }
+    }
+
+    private void handleLock(Node node) {
+        String name = getAttribute(node, "name");
+        LockConfig lockConfig = new LockConfig();
+        lockConfig.setName(name);
+        for (Node n : childElements(node)) {
+            String nodeName = cleanNodeName(n);
+            String value = getTextContent(n).trim();
+            if ("quorum-ref".equals(nodeName)) {
+                lockConfig.setQuorumName(value);
+            }
+        }
+        config.addLockConfig(lockConfig);
     }
 
     private void handleQueue(Node node) {
@@ -900,11 +1194,16 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             } else if ("queue-store".equals(nodeName)) {
                 QueueStoreConfig queueStoreConfig = createQueueStoreConfig(n);
                 qConfig.setQueueStoreConfig(queueStoreConfig);
+            } else if ("quorum-ref".equals(nodeName)) {
+                qConfig.setQuorumName(value);
             } else if ("empty-queue-ttl".equals(nodeName)) {
                 qConfig.setEmptyQueueTtl(getIntegerValue("empty-queue-ttl", value));
+            } else if ("merge-policy".equals(nodeName)) {
+                MergePolicyConfig mergePolicyConfig = createMergePolicyConfig(n);
+                qConfig.setMergePolicyConfig(mergePolicyConfig);
             }
         }
-        this.config.addQueueConfig(qConfig);
+        config.addQueueConfig(qConfig);
     }
 
     private void handleList(Node node) {
@@ -932,9 +1231,15 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 }
             } else if ("statistics-enabled".equals(nodeName)) {
                 lConfig.setStatisticsEnabled(getBooleanValue(value));
+            } else if ("quorum-ref".equals(nodeName)) {
+                lConfig.setQuorumName(value);
+            } else if ("merge-policy".equals(nodeName)) {
+                MergePolicyConfig mergePolicyConfig = createMergePolicyConfig(n);
+                lConfig.setMergePolicyConfig(mergePolicyConfig);
             }
+
         }
-        this.config.addListConfig(lConfig);
+        config.addListConfig(lConfig);
     }
 
     private void handleSet(Node node) {
@@ -962,9 +1267,14 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 }
             } else if ("statistics-enabled".equals(nodeName)) {
                 sConfig.setStatisticsEnabled(getBooleanValue(value));
+            } else if ("quorum-ref".equals(nodeName)) {
+                sConfig.setQuorumName(value);
+            } else if ("merge-policy".equals(nodeName)) {
+                MergePolicyConfig mergePolicyConfig = createMergePolicyConfig(n);
+                sConfig.setMergePolicyConfig(mergePolicyConfig);
             }
         }
-        this.config.addSetConfig(sConfig);
+        config.addSetConfig(sConfig);
     }
 
     private void handleMultiMap(Node node) {
@@ -995,13 +1305,19 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 }
             } else if ("statistics-enabled".equals(nodeName)) {
                 multiMapConfig.setStatisticsEnabled(getBooleanValue(value));
-            }  else if ("binary".equals(nodeName)) {
+            } else if ("binary".equals(nodeName)) {
                 multiMapConfig.setBinary(getBooleanValue(value));
+            } else if ("quorum-ref".equals(nodeName)) {
+                multiMapConfig.setQuorumName(value);
+            } else if ("merge-policy".equals(nodeName)) {
+                MergePolicyConfig mergePolicyConfig = createMergePolicyConfig(n);
+                multiMapConfig.setMergePolicyConfig(mergePolicyConfig);
             }
         }
-        this.config.addMultiMapConfig(multiMapConfig);
+        config.addMultiMapConfig(multiMapConfig);
     }
 
+    @SuppressWarnings("deprecation")
     private void handleReplicatedMap(Node node) {
         Node attName = node.getAttributes().getNamedItem("name");
         String name = getTextContent(attName);
@@ -1011,13 +1327,11 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             String nodeName = cleanNodeName(n);
             String value = getTextContent(n).trim();
             if ("concurrency-level".equals(nodeName)) {
-                replicatedMapConfig.setConcurrencyLevel(getIntegerValue("concurrency-level"
-                        , value));
+                replicatedMapConfig.setConcurrencyLevel(getIntegerValue("concurrency-level", value));
             } else if ("in-memory-format".equals(nodeName)) {
                 replicatedMapConfig.setInMemoryFormat(InMemoryFormat.valueOf(upperCaseInternal(value)));
             } else if ("replication-delay-millis".equals(nodeName)) {
-                replicatedMapConfig.setReplicationDelayMillis(getIntegerValue("replication-delay-millis"
-                        , value));
+                replicatedMapConfig.setReplicationDelayMillis(getIntegerValue("replication-delay-millis", value));
             } else if ("async-fillup".equals(nodeName)) {
                 replicatedMapConfig.setAsyncFillup(getBooleanValue(value));
             } else if ("statistics-enabled".equals(nodeName)) {
@@ -1033,14 +1347,17 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                     }
                 }
             } else if ("merge-policy".equals(nodeName)) {
-                replicatedMapConfig.setMergePolicy(value);
+                MergePolicyConfig mergePolicyConfig = createMergePolicyConfig(n);
+                replicatedMapConfig.setMergePolicyConfig(mergePolicyConfig);
+            } else if ("quorum-ref".equals(nodeName)) {
+                replicatedMapConfig.setQuorumName(value);
             }
         }
-        this.config.addReplicatedMapConfig(replicatedMapConfig);
+        config.addReplicatedMapConfig(replicatedMapConfig);
     }
 
-    //CHECKSTYLE:OFF
-    private void handleMap(Node parentNode) throws Exception {
+    @SuppressWarnings("deprecation")
+    private void handleMap(Node parentNode) {
         String name = getAttribute(parentNode, "name");
         MapConfig mapConfig = new MapConfig();
         mapConfig.setName(name);
@@ -1054,7 +1371,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             } else if ("async-backup-count".equals(nodeName)) {
                 mapConfig.setAsyncBackupCount(getIntegerValue("async-backup-count", value));
             } else if ("eviction-policy".equals(nodeName)) {
-                if(mapConfig.getMapEvictionPolicy() == null) {
+                if (mapConfig.getMapEvictionPolicy() == null) {
                     mapConfig.setEvictionPolicy(EvictionPolicy.valueOf(upperCaseInternal(value)));
                 }
             } else if ("max-size".equals(nodeName)) {
@@ -1064,8 +1381,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                     msc.setMaxSizePolicy(MaxSizeConfig.MaxSizePolicy.valueOf(
                             upperCaseInternal(getTextContent(maxSizePolicy))));
                 }
-                int size = sizeParser(value);
-                msc.setSize(size);
+                msc.setSize(getIntegerValue("max-size", value));
             } else if ("eviction-percentage".equals(nodeName)) {
                 mapConfig.setEvictionPercentage(getIntegerValue("eviction-percentage", value
                 ));
@@ -1084,7 +1400,8 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             } else if ("near-cache".equals(nodeName)) {
                 mapConfig.setNearCacheConfig(handleNearCacheConfig(node));
             } else if ("merge-policy".equals(nodeName)) {
-                mapConfig.setMergePolicy(value);
+                MergePolicyConfig mergePolicyConfig = createMergePolicyConfig(node);
+                mapConfig.setMergePolicyConfig(mergePolicyConfig);
             } else if ("hot-restart".equals(nodeName)) {
                 mapConfig.setHotRestartConfig(createHotRestartConfig(node));
             } else if ("read-backup-data".equals(nodeName)) {
@@ -1122,14 +1439,14 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 }
             }
         }
-        this.config.addMapConfig(mapConfig);
+        config.addMapConfig(mapConfig);
     }
-    //CHECKSTYLE:ON
 
-
+    @SuppressWarnings("deprecation")
     private NearCacheConfig handleNearCacheConfig(Node node) {
         String name = getAttribute(node, "name");
         NearCacheConfig nearCacheConfig = new NearCacheConfig(name);
+        Boolean serializeKeys = null;
         for (Node child : childElements(node)) {
             String nodeName = cleanNodeName(child);
             String value = getTextContent(child).trim();
@@ -1145,6 +1462,9 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 LOGGER.warning("The element <eviction-policy/> for <near-cache/> is deprecated, please use <eviction/> instead!");
             } else if ("in-memory-format".equals(nodeName)) {
                 nearCacheConfig.setInMemoryFormat(InMemoryFormat.valueOf(upperCaseInternal(value)));
+            } else if ("serialize-keys".equals(nodeName)) {
+                serializeKeys = Boolean.parseBoolean(value);
+                nearCacheConfig.setSerializeKeys(serializeKeys);
             } else if ("invalidate-on-change".equals(nodeName)) {
                 nearCacheConfig.setInvalidateOnChange(Boolean.parseBoolean(value));
             } else if ("cache-local-entries".equals(nodeName)) {
@@ -1153,8 +1473,12 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 NearCacheConfig.LocalUpdatePolicy policy = NearCacheConfig.LocalUpdatePolicy.valueOf(value);
                 nearCacheConfig.setLocalUpdatePolicy(policy);
             } else if ("eviction".equals(nodeName)) {
-                nearCacheConfig.setEvictionConfig(getEvictionConfig(child));
+                nearCacheConfig.setEvictionConfig(getEvictionConfig(child, true));
             }
+        }
+        if (serializeKeys != null && !serializeKeys && nearCacheConfig.getInMemoryFormat() == InMemoryFormat.NATIVE) {
+            LOGGER.warning("The Near Cache doesn't support keys by-reference with NATIVE in-memory-format."
+                    + " This setting will have no effect!");
         }
         return nearCacheConfig;
     }
@@ -1172,11 +1496,10 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 hotRestartConfig.setFsync(getBooleanValue(getTextContent(n)));
             }
         }
-
         return hotRestartConfig;
     }
 
-    private void handleCache(Node node) throws Exception {
+    private void handleCache(Node node) {
         String name = getAttribute(node, "name");
         CacheSimpleConfig cacheConfig = new CacheSimpleConfig();
         cacheConfig.setName(name);
@@ -1197,8 +1520,12 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 cacheConfig.setWriteThrough(getBooleanValue(value));
             } else if ("cache-loader-factory".equals(nodeName)) {
                 cacheConfig.setCacheLoaderFactory(getAttribute(n, "class-name"));
+            } else if ("cache-loader".equals(nodeName)) {
+                cacheConfig.setCacheLoader(getAttribute(n, "class-name"));
             } else if ("cache-writer-factory".equals(nodeName)) {
                 cacheConfig.setCacheWriterFactory(getAttribute(n, "class-name"));
+            } else if ("cache-writer".equals(nodeName)) {
+                cacheConfig.setCacheWriter(getAttribute(n, "class-name"));
             } else if ("expiry-policy-factory".equals(nodeName)) {
                 cacheConfig.setExpiryPolicyFactoryConfig(getExpiryPolicyFactoryConfig(n));
             } else if ("cache-entry-listeners".equals(nodeName)) {
@@ -1212,13 +1539,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             } else if ("wan-replication-ref".equals(nodeName)) {
                 cacheWanReplicationRefHandle(n, cacheConfig);
             } else if ("eviction".equals(nodeName)) {
-                EvictionConfig evictionConfig = getEvictionConfig(n);
-                try {
-                    EvictionConfigHelper.checkEvictionConfig(evictionConfig);
-                } catch (IllegalArgumentException e) {
-                    throw new InvalidConfigurationException(e.getMessage());
-                }
-                cacheConfig.setEvictionConfig(evictionConfig);
+                cacheConfig.setEvictionConfig(getEvictionConfig(n, false));
             } else if ("quorum-ref".equals(nodeName)) {
                 cacheConfig.setQuorumName(value);
             } else if ("partition-lost-listeners".equals(nodeName)) {
@@ -1231,7 +1552,12 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 cacheConfig.setDisablePerEntryInvalidationEvents(getBooleanValue(value));
             }
         }
-        this.config.addCacheConfig(cacheConfig);
+        try {
+            checkCacheConfig(cacheConfig, null);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidConfigurationException(e.getMessage());
+        }
+        config.addCacheConfig(cacheConfig);
     }
 
     private ExpiryPolicyFactoryConfig getExpiryPolicyFactoryConfig(Node node) {
@@ -1292,7 +1618,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         return new TimedExpiryPolicyFactoryConfig(expiryPolicyType, durationConfig);
     }
 
-    private EvictionConfig getEvictionConfig(Node node) {
+    private EvictionConfig getEvictionConfig(Node node, boolean isNearCache) {
         EvictionConfig evictionConfig = new EvictionConfig();
         Node size = node.getAttributes().getNamedItem("size");
         Node maxSizePolicy = node.getAttributes().getNamedItem("max-size-policy");
@@ -1302,19 +1628,21 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             evictionConfig.setSize(parseInt(getTextContent(size)));
         }
         if (maxSizePolicy != null) {
-            evictionConfig.setMaximumSizePolicy(
-                    EvictionConfig.MaxSizePolicy.valueOf(
-                            upperCaseInternal(getTextContent(maxSizePolicy)))
+            evictionConfig.setMaximumSizePolicy(MaxSizePolicy.valueOf(upperCaseInternal(getTextContent(maxSizePolicy)))
             );
         }
         if (evictionPolicy != null) {
-            evictionConfig.setEvictionPolicy(
-                    EvictionPolicy.valueOf(
-                            upperCaseInternal(getTextContent(evictionPolicy)))
+            evictionConfig.setEvictionPolicy(EvictionPolicy.valueOf(upperCaseInternal(getTextContent(evictionPolicy)))
             );
         }
         if (comparatorClassName != null) {
             evictionConfig.setComparatorClassName(getTextContent(comparatorClassName));
+        }
+
+        try {
+            checkEvictionConfig(evictionConfig, isNearCache);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidConfigurationException(e.getMessage());
         }
         return evictionConfig;
     }
@@ -1463,8 +1791,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                                         getTextContent(listenerNodeAttributes.getNamedItem("include-value")));
                                 boolean local = getBooleanValue(getTextContent(listenerNodeAttributes.getNamedItem("local")));
                                 String listenerClass = getTextContent(listenerNode);
-                                queryCacheConfig.addEntryListenerConfig(
-                                        new EntryListenerConfig(listenerClass, local, incValue));
+                                queryCacheConfig.addEntryListenerConfig(new EntryListenerConfig(listenerClass, local, incValue));
                             }
                         }
                     } else {
@@ -1473,16 +1800,13 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                             boolean includeValue = getBooleanValue(textContent);
                             queryCacheConfig.setIncludeValue(includeValue);
                         } else if ("batch-size".equals(nodeName)) {
-                            int batchSize = getIntegerValue("batch-size", textContent.trim()
-                            );
+                            int batchSize = getIntegerValue("batch-size", textContent.trim());
                             queryCacheConfig.setBatchSize(batchSize);
                         } else if ("buffer-size".equals(nodeName)) {
-                            int bufferSize = getIntegerValue("buffer-size", textContent.trim()
-                            );
+                            int bufferSize = getIntegerValue("buffer-size", textContent.trim());
                             queryCacheConfig.setBufferSize(bufferSize);
                         } else if ("delay-seconds".equals(nodeName)) {
-                            int delaySeconds = getIntegerValue("delay-seconds", textContent.trim()
-                            );
+                            int delaySeconds = getIntegerValue("delay-seconds", textContent.trim());
                             queryCacheConfig.setDelaySeconds(delaySeconds);
                         } else if ("in-memory-format".equals(nodeName)) {
                             String value = textContent.trim();
@@ -1498,7 +1822,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                         } else if ("predicate".equals(nodeName)) {
                             queryCachePredicateHandler(childNode, queryCacheConfig);
                         } else if ("eviction".equals(nodeName)) {
-                            queryCacheConfig.setEvictionConfig(getEvictionConfig(childNode));
+                            queryCacheConfig.setEvictionConfig(getEvictionConfig(childNode, false));
                         }
                     }
                 }
@@ -1520,35 +1844,11 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         queryCacheConfig.setPredicateConfig(predicateConfig);
     }
 
-
-    private int sizeParser(String value) {
-        int size;
-        if (value.length() < 2) {
-            size = parseInt(value);
-        } else {
-            char last = value.charAt(value.length() - 1);
-            int type = 0;
-            if (last == 'g' || last == 'G') {
-                type = 1;
-            } else if (last == 'm' || last == 'M') {
-                type = 2;
-            }
-            if (type == 0) {
-                size = parseInt(value);
-            } else if (type == 1) {
-                size = parseInt(value.substring(0, value.length() - 1)) * THOUSAND_FACTOR;
-            } else {
-                size = parseInt(value.substring(0, value.length() - 1));
-            }
-        }
-        return size;
-    }
-
     private MapStoreConfig createMapStoreConfig(Node node) {
         MapStoreConfig mapStoreConfig = new MapStoreConfig();
-        NamedNodeMap atts = node.getAttributes();
-        for (int a = 0; a < atts.getLength(); a++) {
-            Node att = atts.item(a);
+        NamedNodeMap attributes = node.getAttributes();
+        for (int a = 0; a < attributes.getLength(); a++) {
+            Node att = attributes.item(a);
             String value = getTextContent(att).trim();
             if ("enabled".equals(att.getNodeName())) {
                 mapStoreConfig.setEnabled(getBooleanValue(value));
@@ -1576,7 +1876,6 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 } else {
                     mapStoreConfig.setWriteCoalescing(getBooleanValue(writeCoalescing));
                 }
-
             } else if ("properties".equals(nodeName)) {
                 fillProperties(n, mapStoreConfig.getProperties());
             }
@@ -1584,11 +1883,46 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         return mapStoreConfig;
     }
 
+    private RingbufferStoreConfig createRingbufferStoreConfig(Node node) {
+        RingbufferStoreConfig config = new RingbufferStoreConfig();
+        NamedNodeMap attributes = node.getAttributes();
+        for (int a = 0; a < attributes.getLength(); a++) {
+            Node att = attributes.item(a);
+            String value = getTextContent(att).trim();
+            if (att.getNodeName().equals("enabled")) {
+                config.setEnabled(getBooleanValue(value));
+            }
+        }
+        for (Node n : childElements(node)) {
+            String nodeName = cleanNodeName(n);
+            if ("class-name".equals(nodeName)) {
+                config.setClassName(getTextContent(n).trim());
+            } else if ("factory-class-name".equals(nodeName)) {
+                config.setFactoryClassName(getTextContent(n).trim());
+            } else if ("properties".equals(nodeName)) {
+                fillProperties(n, config.getProperties());
+            }
+
+        }
+        return config;
+    }
+
+    private MergePolicyConfig createMergePolicyConfig(Node node) {
+        MergePolicyConfig mergePolicyConfig = new MergePolicyConfig();
+        String policyString = getTextContent(node).trim();
+        mergePolicyConfig.setPolicy(policyString);
+        final String att = getAttribute(node, "batch-size");
+        if (att != null) {
+            mergePolicyConfig.setBatchSize(getIntegerValue("batch-size", att));
+        }
+        return mergePolicyConfig;
+    }
+
     private QueueStoreConfig createQueueStoreConfig(Node node) {
         QueueStoreConfig queueStoreConfig = new QueueStoreConfig();
-        NamedNodeMap atts = node.getAttributes();
-        for (int a = 0; a < atts.getLength(); a++) {
-            Node att = atts.item(a);
+        NamedNodeMap attributes = node.getAttributes();
+        for (int a = 0; a < attributes.getLength(); a++) {
+            Node att = attributes.item(a);
             String value = getTextContent(att).trim();
             if (att.getNodeName().equals("enabled")) {
                 queueStoreConfig.setEnabled(getBooleanValue(value));
@@ -1609,8 +1943,8 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
 
     private void handleSSLConfig(Node node) {
         SSLConfig sslConfig = new SSLConfig();
-        NamedNodeMap atts = node.getAttributes();
-        Node enabledNode = atts.getNamedItem("enabled");
+        NamedNodeMap attributes = node.getAttributes();
+        Node enabledNode = attributes.getNamedItem("enabled");
         boolean enabled = enabledNode != null && getBooleanValue(getTextContent(enabledNode).trim());
         sslConfig.setEnabled(enabled);
 
@@ -1623,6 +1957,84 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             }
         }
         config.getNetworkConfig().setSSLConfig(sslConfig);
+    }
+
+    private void handleMcMutualAuthConfig(Node node) {
+        MCMutualAuthConfig mcMutualAuthConfig = new MCMutualAuthConfig();
+        NamedNodeMap attributes = node.getAttributes();
+        Node enabledNode = attributes.getNamedItem("enabled");
+        boolean enabled = enabledNode != null && getBooleanValue(getTextContent(enabledNode).trim());
+        mcMutualAuthConfig.setEnabled(enabled);
+
+        for (Node n : childElements(node)) {
+            String nodeName = cleanNodeName(n);
+            if ("factory-class-name".equals(nodeName)) {
+                mcMutualAuthConfig.setFactoryClassName(getTextContent(n).trim());
+            } else if ("properties".equals(nodeName)) {
+                fillProperties(n, mcMutualAuthConfig.getProperties());
+            }
+        }
+
+        config.getManagementCenterConfig().setMutualAuthConfig(mcMutualAuthConfig);
+    }
+
+    private void handleMemberAddressProvider(Node node) {
+        Node enabledNode = node.getAttributes().getNamedItem("enabled");
+        boolean enabled = enabledNode != null && getBooleanValue(getTextContent(enabledNode));
+        MemberAddressProviderConfig memberAddressProviderConfig = config.getNetworkConfig().getMemberAddressProviderConfig();
+        memberAddressProviderConfig.setEnabled(enabled);
+        for (Node n : childElements(node)) {
+            String nodeName = cleanNodeName(n);
+            if (nodeName.equals("class-name")) {
+                String className = getTextContent(n);
+                memberAddressProviderConfig.setClassName(className);
+            } else if (nodeName.equals("properties")) {
+                fillProperties(n, memberAddressProviderConfig.getProperties());
+            }
+        }
+    }
+
+    private void handleFailureDetector(Node node) {
+        if (!node.hasChildNodes()) {
+            return;
+        }
+
+        for (Node child : childElements(node)) {
+            // icmp only
+            if (!cleanNodeName(child).equals("icmp")) {
+                throw new IllegalStateException("Unsupported child under failure-detector");
+            }
+
+            Node enabledNode = child.getAttributes().getNamedItem("enabled");
+            boolean enabled = enabledNode != null && getBooleanValue(getTextContent(enabledNode));
+            IcmpFailureDetectorConfig icmpFailureDetectorConfig = new IcmpFailureDetectorConfig();
+
+            icmpFailureDetectorConfig.setEnabled(enabled);
+            for (Node n : childElements(child)) {
+                String nodeName = cleanNodeName(n);
+
+                if (nodeName.equals("ttl")) {
+                    int ttl = parseInt(getTextContent(n));
+                    icmpFailureDetectorConfig.setTtl(ttl);
+                } else if (nodeName.equals("timeout-milliseconds")) {
+                    int timeout = parseInt(getTextContent(n));
+                    icmpFailureDetectorConfig.setTimeoutMilliseconds(timeout);
+                } else if (nodeName.equals("parallel-mode")) {
+                    boolean mode = parseBoolean(getTextContent(n));
+                    icmpFailureDetectorConfig.setParallelMode(mode);
+                } else if (nodeName.equals("fail-fast-on-startup")) {
+                    boolean failOnStartup = parseBoolean(getTextContent(n));
+                    icmpFailureDetectorConfig.setFailFastOnStartup(failOnStartup);
+                } else if (nodeName.equals("max-attempts")) {
+                    int attempts = parseInt(getTextContent(n));
+                    icmpFailureDetectorConfig.setMaxAttempts(attempts);
+                } else if (nodeName.equals("interval-milliseconds")) {
+                    int interval = parseInt(getTextContent(n));
+                    icmpFailureDetectorConfig.setIntervalMilliseconds(interval);
+                }
+            }
+            config.getNetworkConfig().setIcmpFailureDetectorConfig(icmpFailureDetectorConfig);
+        }
     }
 
     private void handleSocketInterceptorConfig(Node node) {
@@ -1662,8 +2074,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             String nodeName = cleanNodeName(n);
             if ("read-batch-size".equals(nodeName)) {
                 String batchSize = getTextContent(n);
-                topicConfig.setReadBatchSize(
-                        getIntegerValue("read-batch-size", batchSize));
+                topicConfig.setReadBatchSize(getIntegerValue("read-batch-size", batchSize));
             } else if ("statistics-enabled".equals(nodeName)) {
                 topicConfig.setStatisticsEnabled(getBooleanValue(getTextContent(n)));
             } else if ("topic-overload-policy".equals(nodeName)) {
@@ -1680,6 +2091,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         config.addReliableTopicConfig(topicConfig);
     }
 
+    @SuppressWarnings("deprecation")
     private void handleJobTracker(Node node) {
         Node attName = node.getAttributes().getNamedItem("name");
         String name = getTextContent(attName);
@@ -1697,8 +2109,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             } else if ("chunk-size".equals(nodeName)) {
                 jConfig.setChunkSize(getIntegerValue("chunk-size", value));
             } else if ("communicate-stats".equals(nodeName)) {
-                jConfig.setCommunicateStats(value == null || value.length() == 0
-                        ? JobTrackerConfig.DEFAULT_COMMUNICATE_STATS : parseBoolean(value));
+                jConfig.setCommunicateStats(value.length() == 0 ? DEFAULT_COMMUNICATE_STATS : parseBoolean(value));
             } else if ("topology-changed-stategy".equals(nodeName)) {
                 TopologyChangedStrategy topologyChangedStrategy = JobTrackerConfig.DEFAULT_TOPOLOGY_CHANGED_STRATEGY;
                 for (TopologyChangedStrategy temp : TopologyChangedStrategy.values()) {
@@ -1728,9 +2139,23 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             } else if ("async-backup-count".equals(nodeName)) {
                 sConfig.setAsyncBackupCount(getIntegerValue("async-backup-count"
                         , value));
+            } else if ("quorum-ref".equals(nodeName)) {
+                sConfig.setQuorumName(value);
             }
         }
         config.addSemaphoreConfig(sConfig);
+    }
+
+    private void handleEventJournal(Node node) throws Exception {
+        EventJournalConfig journalConfig = new EventJournalConfig();
+        handleViaReflection(node, config, journalConfig);
+        config.addEventJournalConfig(journalConfig);
+    }
+
+    private void handleMerkleTree(Node node) throws Exception {
+        MerkleTreeConfig merkleTreeConfig = new MerkleTreeConfig();
+        handleViaReflection(node, config, merkleTreeConfig);
+        config.addMerkleTreeConfig(merkleTreeConfig);
     }
 
     private void handleRingbuffer(Node node) {
@@ -1755,12 +2180,68 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
             } else if ("in-memory-format".equals(nodeName)) {
                 InMemoryFormat inMemoryFormat = InMemoryFormat.valueOf(upperCaseInternal(value));
                 rbConfig.setInMemoryFormat(inMemoryFormat);
+            } else if ("ringbuffer-store".equals(nodeName)) {
+                RingbufferStoreConfig ringbufferStoreConfig = createRingbufferStoreConfig(n);
+                rbConfig.setRingbufferStoreConfig(ringbufferStoreConfig);
+            } else if ("quorum-ref".equals(nodeName)) {
+                rbConfig.setQuorumName(value);
+            } else if ("merge-policy".equals(nodeName)) {
+                MergePolicyConfig mergePolicyConfig = createMergePolicyConfig(n);
+                rbConfig.setMergePolicyConfig(mergePolicyConfig);
             }
         }
         config.addRingBufferConfig(rbConfig);
     }
 
-    private void handleListeners(Node node) throws Exception {
+    private void handleAtomicLong(Node node) {
+        Node attName = node.getAttributes().getNamedItem("name");
+        String name = getTextContent(attName);
+        AtomicLongConfig atomicLongConfig = new AtomicLongConfig(name);
+        for (Node n : childElements(node)) {
+            String nodeName = cleanNodeName(n);
+            String value = getTextContent(n).trim();
+            if ("merge-policy".equals(nodeName)) {
+                MergePolicyConfig mergePolicyConfig = createMergePolicyConfig(n);
+                atomicLongConfig.setMergePolicyConfig(mergePolicyConfig);
+            } else if ("quorum-ref".equals(nodeName)) {
+                atomicLongConfig.setQuorumName(value);
+            }
+        }
+        config.addAtomicLongConfig(atomicLongConfig);
+    }
+
+    private void handleAtomicReference(Node node) {
+        Node attName = node.getAttributes().getNamedItem("name");
+        String name = getTextContent(attName);
+        AtomicReferenceConfig atomicReferenceConfig = new AtomicReferenceConfig(name);
+        for (Node n : childElements(node)) {
+            String nodeName = cleanNodeName(n);
+            String value = getTextContent(n).trim();
+            if ("merge-policy".equals(nodeName)) {
+                MergePolicyConfig mergePolicyConfig = createMergePolicyConfig(n);
+                atomicReferenceConfig.setMergePolicyConfig(mergePolicyConfig);
+            } else if ("quorum-ref".equals(nodeName)) {
+                atomicReferenceConfig.setQuorumName(value);
+            }
+        }
+        config.addAtomicReferenceConfig(atomicReferenceConfig);
+    }
+
+    private void handleCountDownLatchConfig(Node node) {
+        Node attName = node.getAttributes().getNamedItem("name");
+        String name = getTextContent(attName);
+        CountDownLatchConfig countDownLatchConfig = new CountDownLatchConfig(name);
+        for (Node n : childElements(node)) {
+            String nodeName = cleanNodeName(n);
+            String value = getTextContent(n).trim();
+            if ("quorum-ref".equals(nodeName)) {
+                countDownLatchConfig.setQuorumName(value);
+            }
+        }
+        config.addCountDownLatchConfig(countDownLatchConfig);
+    }
+
+    private void handleListeners(Node node) {
         for (Node child : childElements(node)) {
             if ("listener".equals(cleanNodeName(child))) {
                 String listenerClass = getTextContent(child);
@@ -1770,11 +2251,11 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
     }
 
     private void handlePartitionGroup(Node node) {
-        NamedNodeMap atts = node.getAttributes();
-        Node enabledNode = atts.getNamedItem("enabled");
-        boolean enabled = enabledNode != null ? getBooleanValue(getTextContent(enabledNode)) : false;
+        NamedNodeMap attributes = node.getAttributes();
+        Node enabledNode = attributes.getNamedItem("enabled");
+        boolean enabled = enabledNode != null && getBooleanValue(getTextContent(enabledNode));
         config.getPartitionGroupConfig().setEnabled(enabled);
-        Node groupTypeNode = atts.getNamedItem("group-type");
+        Node groupTypeNode = attributes.getNamedItem("group-type");
         MemberGroupType groupType = groupTypeNode != null
                 ? MemberGroupType.valueOf(upperCaseInternal(getTextContent(groupTypeNode)))
                 : MemberGroupType.PER_MEMBER;
@@ -1812,16 +2293,38 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         int interval = intervalNode != null ? getIntegerValue("update-interval",
                 getTextContent(intervalNode)) : ManagementCenterConfig.UPDATE_INTERVAL;
 
-        String url = getTextContent(node);
         ManagementCenterConfig managementCenterConfig = config.getManagementCenterConfig();
         managementCenterConfig.setEnabled(enabled);
         managementCenterConfig.setUpdateInterval(interval);
-        managementCenterConfig.setUrl("".equals(url) ? null : url);
+
+        // < 3.9 - Backwards compatibility
+        boolean isComplexType = false;
+        List<String> complexTypeElements = Arrays.asList("url", "mutual-auth");
+        for (Node c : childElements(node)) {
+            if (complexTypeElements.contains(c.getNodeName())) {
+                isComplexType = true;
+                break;
+            }
+        }
+
+        if (!isComplexType) {
+            String url = getTextContent(node);
+            managementCenterConfig.setUrl("".equals(url) ? null : url);
+        } else {
+            for (Node child : childElements(node)) {
+                if ("url".equals(cleanNodeName(child))) {
+                    String url = getTextContent(child);
+                    managementCenterConfig.setUrl(url);
+                } else if ("mutual-auth".equals(cleanNodeName(child))) {
+                    handleMcMutualAuthConfig(child);
+                }
+            }
+        }
     }
 
-    private void handleSecurity(Node node) throws Exception {
-        NamedNodeMap atts = node.getAttributes();
-        Node enabledNode = atts.getNamedItem("enabled");
+    private void handleSecurity(Node node) {
+        NamedNodeMap attributes = node.getAttributes();
+        Node enabledNode = attributes.getNamedItem("enabled");
         boolean enabled = enabledNode != null && getBooleanValue(getTextContent(enabledNode));
         config.getSecurityConfig().setEnabled(enabled);
         for (Node child : childElements(node)) {
@@ -1838,11 +2341,13 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 handleSecurityPermissions(child);
             } else if ("security-interceptors".equals(nodeName)) {
                 handleSecurityInterceptors(child);
+            } else if ("client-block-unmapped-actions".equals(nodeName)) {
+                config.getSecurityConfig().setClientBlockUnmappedActions(getBooleanValue(getTextContent(child)));
             }
         }
     }
 
-    private void handleSecurityInterceptors(Node node) throws Exception {
+    private void handleSecurityInterceptors(Node node) {
         SecurityConfig cfg = config.getSecurityConfig();
         for (Node child : childElements(node)) {
             String nodeName = cleanNodeName(child);
@@ -1886,7 +2391,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         }
     }
 
-    private void handleCredentialsFactory(Node node) throws Exception {
+    private void handleCredentialsFactory(Node node) {
         NamedNodeMap attrs = node.getAttributes();
         Node classNameNode = attrs.getNamedItem("class-name");
         String className = getTextContent(classNameNode);
@@ -1902,7 +2407,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         }
     }
 
-    private void handleLoginModules(Node node, boolean member) throws Exception {
+    private void handleLoginModules(Node node, boolean member) {
         SecurityConfig cfg = config.getSecurityConfig();
         for (Node child : childElements(node)) {
             String nodeName = cleanNodeName(child);
@@ -1917,7 +2422,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         }
     }
 
-    private LoginModuleConfig handleLoginModule(Node node) throws Exception {
+    private LoginModuleConfig handleLoginModule(Node node) {
         NamedNodeMap attrs = node.getAttributes();
         Node classNameNode = attrs.getNamedItem("class-name");
         String className = getTextContent(classNameNode);
@@ -1935,7 +2440,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         return moduleConfig;
     }
 
-    private void handlePermissionPolicy(Node node) throws Exception {
+    private void handlePermissionPolicy(Node node) {
         NamedNodeMap attrs = node.getAttributes();
         Node classNameNode = attrs.getNamedItem("class-name");
         String className = getTextContent(classNameNode);
@@ -1951,7 +2456,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         }
     }
 
-    private void handleSecurityPermissions(Node node) throws Exception {
+    private void handleSecurityPermissions(Node node) {
         for (Node child : childElements(node)) {
             String nodeName = cleanNodeName(child);
             PermissionType type;
@@ -1977,12 +2482,28 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
                 type = PermissionType.SEMAPHORE;
             } else if ("id-generator-permission".equals(nodeName)) {
                 type = PermissionType.ID_GENERATOR;
+            } else if ("flake-id-generator-permission".equals(nodeName)) {
+                type = PermissionType.FLAKE_ID_GENERATOR;
             } else if ("executor-service-permission".equals(nodeName)) {
                 type = PermissionType.EXECUTOR_SERVICE;
             } else if ("transaction-permission".equals(nodeName)) {
                 type = PermissionType.TRANSACTION;
             } else if ("all-permissions".equals(nodeName)) {
                 type = PermissionType.ALL;
+            } else if ("durable-executor-service-permission".equals(nodeName)) {
+                type = PermissionType.DURABLE_EXECUTOR_SERVICE;
+            } else if ("cardinality-estimator-permission".equals(nodeName)) {
+                type = PermissionType.CARDINALITY_ESTIMATOR;
+            } else if ("scheduled-executor-permission".equals(nodeName)) {
+                type = PermissionType.SCHEDULED_EXECUTOR;
+            } else if ("pn-counter-permission".equals(nodeName)) {
+                type = PermissionType.PN_COUNTER;
+            } else if ("cache-permission".equals(nodeName)) {
+                type = PermissionType.CACHE;
+            } else if ("user-code-deployment".equals(nodeName)) {
+                type = PermissionType.USER_CODE_DEPLOYMENT;
+            } else if (PermissionType.CONFIG.getNodeName().equals(nodeName)) {
+                type = PermissionType.CONFIG;
             } else {
                 continue;
             }
@@ -1990,7 +2511,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         }
     }
 
-    private void handleSecurityPermission(Node node, PermissionType type) throws Exception {
+    private void handleSecurityPermission(Node node, PermissionType type) {
         SecurityConfig cfg = config.getSecurityConfig();
         NamedNodeMap attrs = node.getAttributes();
         Node nameNode = attrs.getNamedItem("name");
@@ -2009,7 +2530,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         }
     }
 
-    private void handleSecurityPermissionEndpoints(Node node, PermissionConfig permConfig) throws Exception {
+    private void handleSecurityPermissionEndpoints(Node node, PermissionConfig permConfig) {
         for (Node child : childElements(node)) {
             String nodeName = cleanNodeName(child);
             if ("endpoint".equals(nodeName)) {
@@ -2018,7 +2539,7 @@ public class XmlConfigBuilder extends AbstractConfigBuilder implements ConfigBui
         }
     }
 
-    private void handleSecurityPermissionActions(Node node, PermissionConfig permConfig) throws Exception {
+    private void handleSecurityPermissionActions(Node node, PermissionConfig permConfig) {
         for (Node child : childElements(node)) {
             String nodeName = cleanNodeName(child);
             if ("action".equals(nodeName)) {

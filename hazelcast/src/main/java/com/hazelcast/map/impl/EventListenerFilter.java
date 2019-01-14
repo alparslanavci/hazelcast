@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package com.hazelcast.map.impl;
 import com.hazelcast.core.EntryEventType;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
-import com.hazelcast.nio.serialization.DataSerializable;
+import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.spi.EventFilter;
 import com.hazelcast.spi.impl.eventservice.impl.TrueEventFilter;
 
@@ -28,6 +28,8 @@ import java.io.IOException;
 import static com.hazelcast.map.impl.MapListenerFlagOperator.SET_ALL_LISTENER_FLAGS;
 
 /**
+ * Event filter matching events of specified types. This filter also contains an another filter but it does not
+ * involve it when evaluating if the event matches.
  * Prevents sending of not requested events to a {@link com.hazelcast.map.listener.MapListener MapListener}
  * by filtering events according the implemented {@link com.hazelcast.map.listener.MapListener MapListener} sub-interfaces.
  * <p/>
@@ -47,7 +49,7 @@ import static com.hazelcast.map.impl.MapListenerFlagOperator.SET_ALL_LISTENER_FL
  * @see com.hazelcast.map.listener.MapListener
  * @since 3.6
  */
-public class EventListenerFilter implements EventFilter, DataSerializable {
+public class EventListenerFilter implements EventFilter, IdentifiedDataSerializable {
 
     /**
      * Flags of implemented listeners.
@@ -92,5 +94,15 @@ public class EventListenerFilter implements EventFilter, DataSerializable {
                 + "listenerFlags=" + listenerFlags
                 + ", eventFilter=" + eventFilter
                 + '}';
+    }
+
+    @Override
+    public int getFactoryId() {
+        return MapDataSerializerHook.F_ID;
+    }
+
+    @Override
+    public int getId() {
+        return MapDataSerializerHook.EVENT_LISTENER_FILTER;
     }
 }

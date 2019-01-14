@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,13 @@ package com.hazelcast.internal.serialization.impl;
 
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.Data;
+import com.hazelcast.spi.serialization.SerializationService;
 
 import java.io.IOException;
 import java.nio.ByteOrder;
 
-final class EmptyObjectDataOutput implements ObjectDataOutput {
+@SuppressWarnings("checkstyle:methodcount")
+final class EmptyObjectDataOutput extends VersionedObjectDataOutput implements ObjectDataOutput {
 
     @Override
     public void writeObject(Object object) throws IOException {
@@ -126,6 +128,11 @@ final class EmptyObjectDataOutput implements ObjectDataOutput {
 
     @Override
     public byte[] toByteArray() {
+        return toByteArray(0);
+    }
+
+    @Override
+    public byte[] toByteArray(int padding) {
         throw new UnsupportedOperationException();
     }
 
@@ -135,5 +142,10 @@ final class EmptyObjectDataOutput implements ObjectDataOutput {
     @Override
     public ByteOrder getByteOrder() {
         return ByteOrder.BIG_ENDIAN;
+    }
+
+    @Override
+    public SerializationService getSerializationService() {
+        return null;
     }
 }

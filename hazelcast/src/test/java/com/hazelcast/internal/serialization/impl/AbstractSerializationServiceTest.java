@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.hazelcast.internal.serialization.impl;
 
 import com.hazelcast.core.HazelcastInstanceNotActiveException;
@@ -8,8 +24,10 @@ import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.CustomSerializationTest;
 import com.hazelcast.nio.serialization.Data;
+import com.hazelcast.nio.serialization.DataSerializable;
 import com.hazelcast.nio.serialization.HazelcastSerializationException;
 import com.hazelcast.nio.serialization.StreamSerializer;
+import com.hazelcast.nio.serialization.TypedDataSerializable;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelTest;
 import com.hazelcast.test.annotation.QuickTest;
@@ -42,9 +60,29 @@ public class AbstractSerializationServiceTest {
 
     @Before
     public void setup() {
+        abstractSerializationService = newAbstractSerializationService();
+    }
+
+    protected AbstractSerializationService newAbstractSerializationService() {
         DefaultSerializationServiceBuilder defaultSerializationServiceBuilder = new DefaultSerializationServiceBuilder();
-        abstractSerializationService = (AbstractSerializationService) defaultSerializationServiceBuilder
-                .setVersion(InternalSerializationService.VERSION_1).build();
+        return defaultSerializationServiceBuilder.setVersion(InternalSerializationService.VERSION_1).build();
+    }
+
+    @Test
+    public void toBytes_withPadding() {
+        String payload = "somepayload";
+        int padding = 10;
+
+        byte[] unpadded = abstractSerializationService.toBytes(payload, 0, true);
+        byte[] padded = abstractSerializationService.toBytes(payload, 10, true);
+
+        // make sure the size is expected
+        assertEquals(unpadded.length + padding, padded.length);
+
+        // check if the actual content is the same
+        for (int k = 0; k < unpadded.length; k++) {
+            assertEquals(unpadded[k], padded[k + padding]);
+        }
     }
 
     @Test
@@ -183,7 +221,201 @@ public class AbstractSerializationServiceTest {
         abstractSerializationService.serializerFor(new CustomSerializationTest.Foo());
     }
 
+    @Test
+    public void testDeserializationForSpecificType() {
+        BaseClass baseObject = new BaseClass(5, "abc");
+        ExtendedClass extendedObject = new ExtendedClass(baseObject, 378);
+        Data extendedData = abstractSerializationService.toData(extendedObject);
+
+        Object deserializedObject = abstractSerializationService.toObject(extendedData);
+        assertEquals(extendedObject, deserializedObject);
+
+        deserializedObject = abstractSerializationService.toObject(extendedObject, BaseClass.class);
+        assertEquals(baseObject, deserializedObject);
+    }
+
+    @Test
+    public void testTypedSerialization() {
+        BaseClass baseObject = new BaseClass();
+        Data data = abstractSerializationService.toData(baseObject);
+        Object deserializedObject = abstractSerializationService.toObject(data);
+        assertEquals(baseObject, deserializedObject);
+
+        TypedBaseClass typedBaseObject = new TypedBaseClass(baseObject);
+        Data typedData = abstractSerializationService.toData(typedBaseObject);
+
+        deserializedObject = abstractSerializationService.toObject(typedData);
+        assertEquals(BaseClass.class, deserializedObject.getClass());
+        assertEquals(baseObject, deserializedObject);
+
+        deserializedObject = abstractSerializationService.toObject(typedData, TypedBaseClass.class);
+        assertEquals(typedBaseObject, deserializedObject);
+    }
+
+    public static class TypedBaseClass implements DataSerializable, TypedDataSerializable {
+        private final BaseClass innerObj;
+
+        public TypedBaseClass() {
+            innerObj = new BaseClass();
+        }
+
+        public TypedBaseClass(BaseClass innerObj) {
+            this.innerObj = innerObj;
+        }
+
+        @Override
+        public Class getClassType() {
+            return BaseClass.class;
+        }
+
+        @Override
+        public void writeData(ObjectDataOutput out)
+                throws IOException {
+            innerObj.writeData(out);
+            out.writeInt(innerObj.intField);
+        }
+
+        @Override
+        public void readData(ObjectDataInput in)
+                throws IOException {
+            innerObj.readData(in);
+            innerObj.intField = in.readInt();
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj) {
+                return true;
+            }
+            if (null == obj) {
+                return false;
+            }
+            if (null == obj || !(getClass().isAssignableFrom(obj.getClass()))) {
+                return false;
+            }
+
+            TypedBaseClass rhs = (TypedBaseClass) obj;
+            if (null == innerObj && null != rhs.innerObj || null != innerObj && null == rhs.innerObj) {
+                return false;
+            }
+            if (null == innerObj && null == rhs.innerObj) {
+                return true;
+            }
+            return innerObj.equals(rhs.innerObj);
+        }
+
+        @Override
+        public int hashCode() {
+            return innerObj != null ? innerObj.hashCode() : 0;
+        }
+    }
+
+    public static class BaseClass implements DataSerializable {
+
+        private int intField;
+        private String stringField;
+
+        public BaseClass() {
+        }
+
+        public BaseClass(BaseClass rhs) {
+            this.intField = rhs.intField;
+            this.stringField = rhs.stringField;
+        }
+
+        public BaseClass(int intField, String stringField) {
+            this.intField = intField;
+            this.stringField = stringField;
+        }
+
+        @Override
+        public void writeData(ObjectDataOutput out) throws IOException {
+            out.writeInt(intField);
+            out.writeUTF(stringField);
+        }
+
+        @Override
+        public void readData(ObjectDataInput in) throws IOException {
+            intField = in.readInt();
+            stringField = in.readUTF();
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (o == null || !getClass().isAssignableFrom(o.getClass())) {
+                return false;
+            }
+
+            BaseClass baseClass = (BaseClass) o;
+            if (intField != baseClass.intField) {
+                return false;
+            }
+            return stringField != null ? stringField.equals(baseClass.stringField) : baseClass.stringField == null;
+        }
+
+        @Override
+        public int hashCode() {
+            int result = intField;
+            result = 31 * result + (stringField != null ? stringField.hashCode() : 0);
+            return result;
+        }
+    }
+
+    public static class ExtendedClass extends BaseClass {
+
+        private long longField;
+
+        public ExtendedClass() {
+        }
+
+        public ExtendedClass(BaseClass baseObject, long longField) {
+            super(baseObject);
+            this.longField = longField;
+        }
+
+        @Override
+        public void writeData(ObjectDataOutput out) throws IOException {
+            super.writeData(out);
+            out.writeLong(longField);
+
+        }
+
+        @Override
+        public void readData(ObjectDataInput in) throws IOException {
+            super.readData(in);
+            longField = in.readLong();
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (o == null || !getClass().isAssignableFrom(o.getClass())) {
+                return false;
+            }
+            if (!super.equals(o)) {
+                return false;
+            }
+
+            ExtendedClass that = (ExtendedClass) o;
+            return longField == that.longField;
+
+        }
+
+        @Override
+        public int hashCode() {
+            int result = super.hashCode();
+            result = 31 * result + (int) (longField ^ (longField >>> 32));
+            return result;
+        }
+    }
+
     private class StringBufferSerializer implements StreamSerializer<StringBuffer> {
+
         int typeId = 100000;
         private boolean fail;
 
@@ -198,7 +430,6 @@ public class AbstractSerializationServiceTest {
 
         @Override
         public void destroy() {
-
         }
 
         @Override
@@ -226,5 +457,4 @@ public class AbstractSerializationServiceTest {
             super(fail);
         }
     }
-
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.hazelcast.spi.discovery;
 
 import com.hazelcast.config.properties.PropertyDefinition;
 import com.hazelcast.logging.ILogger;
-import com.hazelcast.spi.annotation.Beta;
 import com.hazelcast.spi.partitiongroup.PartitionGroupStrategy;
 import com.hazelcast.util.StringUtil;
 
@@ -34,7 +33,6 @@ import static java.util.Collections.unmodifiableMap;
  *
  * @since 3.6
  */
-@Beta
 public abstract class AbstractDiscoveryStrategy implements DiscoveryStrategy {
 
     private final ILogger logger;

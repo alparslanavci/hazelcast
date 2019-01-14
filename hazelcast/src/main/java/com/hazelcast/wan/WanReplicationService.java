@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,13 @@
 
 package com.hazelcast.wan;
 
+import com.hazelcast.config.InvalidConfigurationException;
+import com.hazelcast.config.WanReplicationConfig;
+import com.hazelcast.monitor.LocalWanStats;
+import com.hazelcast.monitor.WanSyncState;
 import com.hazelcast.spi.CoreService;
 import com.hazelcast.spi.StatisticsAwareService;
+import com.hazelcast.wan.impl.DistributedServiceWanEventCounters;
 
 /**
  * This is the WAN replications service API core interface. The WanReplicationService needs to
@@ -25,8 +30,7 @@ import com.hazelcast.spi.StatisticsAwareService;
  * to replicate values to other clusters over the wide area network, so it has to deal with long
  * delays, slow uploads and higher latencies.
  */
-public interface WanReplicationService
-        extends CoreService, StatisticsAwareService {
+public interface WanReplicationService extends CoreService, StatisticsAwareService<LocalWanStats> {
 
     /**
      * Service name.
@@ -48,22 +52,122 @@ public interface WanReplicationService
     void shutdown();
 
     /**
-     * Pauses wan replication to target group for the called node
+     * Pauses WAN replication for the given {@code wanReplicationName} and
+     * {@code targetGroupName} on this hazelcast instance.
      *
-     * @param name name of WAN replication configuration
-     * @param targetGroupName name of wan target cluster config
+     * @param wanReplicationName name of WAN replication configuration
+     * @param targetGroupName    WAN target cluster group name
+     * @throws UnsupportedOperationException if called on an OS instance
      */
-    void pause(String name, String targetGroupName);
+    void pause(String wanReplicationName, String targetGroupName);
 
     /**
-     * Resumes wan replication to target group for the called node.
+     * Stops WAN replication for the given {@code wanReplicationName} and
+     * {@code targetGroupName} on this hazelcast instance.
      *
-     * @param name name of WAN replication configuration
-     * @param targetGroupName name of wan target cluster config
+     * @param wanReplicationName name of WAN replication configuration
+     * @param targetGroupName    WAN target cluster group name
+     * @throws UnsupportedOperationException if called on an OS instance
      */
-    void resume(String name, String targetGroupName);
+    void stop(String wanReplicationName, String targetGroupName);
+
+    /**
+     * Resumes WAN replication for the given {@code wanReplicationName} and
+     * {@code targetGroupName} on this hazelcast instance.
+     *
+     * @param wanReplicationName name of WAN replication configuration
+     * @param targetGroupName    WAN target cluster group name
+     * @throws UnsupportedOperationException if called on an OS instance
+     */
+    void resume(String wanReplicationName, String targetGroupName);
 
     void checkWanReplicationQueues(String name);
 
+    /**
+     * Initiate wan sync for a specific map.
+     * NOTE: not supported on OS, only on EE
+     *
+     * @param wanReplicationName the name of the wan replication config
+     * @param targetGroupName    the group name on the target cluster
+     * @param mapName            the map name
+     * @throws UnsupportedOperationException if the operation is not supported (not EE)
+     * @throws InvalidConfigurationException if there is no WAN replication config for {@code wanReplicationName}
+     * @throws SyncFailedException           if there is a anti-entropy request in progress
+     */
     void syncMap(String wanReplicationName, String targetGroupName, String mapName);
+
+    /**
+     * Initiate wan sync for all maps.
+     * NOTE: not supported on OS, only on EE
+     *
+     * @param wanReplicationName the name of the wan replication config
+     * @param targetGroupName    the group name on the target cluster
+     * @throws UnsupportedOperationException if the operation is not supported (not EE)
+     * @throws InvalidConfigurationException if there is no WAN replication config for {@code wanReplicationName}
+     * @throws SyncFailedException           if there is a anti-entropy request in progress
+     */
+    void syncAllMaps(String wanReplicationName, String targetGroupName);
+
+
+    /**
+     * Initiate WAN consistency check for a specific map.
+     * NOTE: not supported on OS, only on EE
+     *
+     * @param wanReplicationName the name of the wan replication config
+     * @param targetGroupName    the group name on the target cluster
+     * @param mapName            the map name
+     * @throws UnsupportedOperationException if the operation is not supported (not EE)
+     * @throws InvalidConfigurationException if there is no WAN replication config for {@code wanReplicationName}
+     * @throws SyncFailedException           if there is a anti-entropy request in progress
+     */
+    void consistencyCheck(String wanReplicationName, String targetGroupName, String mapName);
+
+
+    /**
+     * Clears WAN replication queues of the given wanReplicationName for the given target.
+     *
+     * @param wanReplicationName the name of the wan replication config
+     * @param targetGroupName    the target cluster group name
+     */
+    void clearQueues(String wanReplicationName, String targetGroupName);
+
+    /**
+     * Adds a new {@link WanReplicationConfig} to this member and creates the {@link WanReplicationPublisher}s specified
+     * in the config.
+     */
+    void addWanReplicationConfig(WanReplicationConfig wanConfig);
+
+    /**
+     * Returns current status of WAN sync operation
+     */
+    WanSyncState getWanSyncState();
+
+    /**
+     * Returns a counter of received and processed WAN replication events.
+     *
+     * @param serviceName the name of the service for the WAN events
+     * @return the WAN event counter
+     */
+    DistributedServiceWanEventCounters getReceivedEventCounters(String serviceName);
+
+    /**
+     * Returns a counter of sent and processed WAN replication events.
+     *
+     * @param wanReplicationName the name of the wan replication config
+     * @param targetGroupName    the target cluster group name
+     * @param serviceName        the name of the service for the WAN events
+     * @return the WAN event counter
+     */
+    DistributedServiceWanEventCounters getSentEventCounters(String wanReplicationName,
+                                                            String targetGroupName,
+                                                            String serviceName);
+
+    /**
+     * Removes all WAN event counters for the given {@code serviceName} and
+     * {@code dataStructureName}.
+     *
+     * @param serviceName       the name of the service for the WAN events
+     * @param dataStructureName the distributed object name
+     */
+    void removeWanEventCounters(String serviceName, String dataStructureName);
 }

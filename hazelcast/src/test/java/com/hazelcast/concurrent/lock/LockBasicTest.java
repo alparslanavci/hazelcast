@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package com.hazelcast.concurrent.lock;
 
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.ILock;
+import com.hazelcast.internal.partition.InternalPartitionService;
+import com.hazelcast.internal.partition.impl.InternalPartitionImpl;
 import com.hazelcast.spi.exception.DistributedObjectDestroyedException;
 import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
@@ -318,6 +320,36 @@ public abstract class LockBasicTest extends HazelcastTestSupport {
         lock.lock(1000, null);
     }
 
+    @Test
+    public void testLockLeaseTime_lockIsReleasedEventuallyWhenPartitionIsMigrating() {
+        final InternalPartitionService ps = getNode(instances[instances.length - 1]).nodeEngine.getPartitionService();
+        final int partitionId = ps.getPartitionId(lock.getName());
+        final InternalPartitionImpl partition = (InternalPartitionImpl) ps.getPartition(partitionId);
+        final int leaseTime = 1000;
+
+        lock.lock(leaseTime, TimeUnit.MILLISECONDS);
+        partition.setMigrating(true);
+
+        spawn(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Thread.sleep(leaseTime + 4000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                partition.setMigrating(false);
+            }
+        });
+
+        assertTrueEventually(new AssertTask() {
+            @Override
+            public void run() throws Exception {
+                assertFalse(lock.isLocked());
+            }
+        }, 30);
+    }
+
     @Test(timeout = 60000)
     public void testLockLeaseTime_whenLockFree() {
         lock.lock(1000, TimeUnit.MILLISECONDS);
@@ -489,6 +521,39 @@ public abstract class LockBasicTest extends HazelcastTestSupport {
         }).start();
 
         lock.lock();
+    }
+
+    @Test
+    public void test_whenLockDestroyed_thenUnlocked() {
+        lock.lock();
+        lock.destroy();
+
+        assertTrueEventually(new AssertTask() {
+            @Override
+            public void run() throws Exception {
+                assertFalse("Lock should have been unlocked by destroy.", lock.isLocked());
+            }
+        });
+    }
+
+    @Test
+    public void test_whenLockDestroyedFromAnotherThread_thenUnlocked() {
+        lock.lock();
+
+        Thread thread = new Thread() {
+            public void run() {
+                lock.destroy();
+            }
+        };
+        thread.start();
+        assertJoinable(thread);
+
+        assertTrueEventually(new AssertTask() {
+            @Override
+            public void run() throws Exception {
+                assertFalse("Lock should have been unlocked by destroy.", lock.isLocked());
+            }
+        });
     }
 
     @Test

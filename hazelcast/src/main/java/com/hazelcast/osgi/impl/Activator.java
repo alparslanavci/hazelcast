@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.osgi.impl;
 
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
+import com.hazelcast.osgi.HazelcastOSGiService;
 import org.osgi.framework.BundleActivator;
 import org.osgi.framework.BundleContext;
 
@@ -76,6 +77,9 @@ public class Activator
     }
 
     static boolean isJavaxScriptingAvailable() {
+        if (Boolean.getBoolean(HazelcastOSGiService.HAZELCAST_OSGI_JSR223_DISABLED)) {
+            return false;
+        }
         try {
             Class.forName("javax.script.ScriptEngineManager");
             return true;

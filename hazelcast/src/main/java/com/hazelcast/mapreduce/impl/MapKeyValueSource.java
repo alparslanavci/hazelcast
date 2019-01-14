@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import com.hazelcast.mapreduce.PartitionIdAware;
 import com.hazelcast.nio.Address;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
+import com.hazelcast.nio.serialization.BinaryInterface;
 import com.hazelcast.nio.serialization.Data;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.spi.NodeEngine;
@@ -43,6 +44,7 @@ import java.util.Map;
  * @param <K> type of the key of the IMap
  * @param <V> type of the value of the IMap
  */
+@BinaryInterface
 public class MapKeyValueSource<K, V>
         extends KeyValueSource<K, V>
         implements IdentifiedDataSerializable, PartitionIdAware {

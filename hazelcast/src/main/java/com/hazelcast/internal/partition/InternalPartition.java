@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,5 +23,11 @@ public interface InternalPartition extends IPartition {
 
     int MAX_REPLICA_COUNT = MAX_BACKUP_COUNT + 1;
 
+    /**
+     * Return the replica index for this partition.
+     *
+     * @param address the replica address
+     * @return the replica index or -1 if the address is null or the address is not in the replica list
+     */
     int getReplicaIndex(Address address);
 }

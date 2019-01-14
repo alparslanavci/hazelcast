@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,14 +19,13 @@ package com.hazelcast.multimap.impl;
 import com.hazelcast.nio.IOUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
-import com.hazelcast.nio.serialization.DataSerializable;
+import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 
 import java.io.IOException;
 
-public class MultiMapRecord implements DataSerializable {
+public class MultiMapRecord implements IdentifiedDataSerializable {
 
     private long recordId = -1;
-
     private Object object;
 
     public MultiMapRecord() {
@@ -67,11 +66,9 @@ public class MultiMapRecord implements DataSerializable {
         }
 
         MultiMapRecord record = (MultiMapRecord) o;
-
         if (!object.equals(record.object)) {
             return false;
         }
-
         return true;
     }
 
@@ -90,5 +87,15 @@ public class MultiMapRecord implements DataSerializable {
     public void readData(ObjectDataInput in) throws IOException {
         recordId = in.readLong();
         object = IOUtil.readObject(in);
+    }
+
+    @Override
+    public int getFactoryId() {
+        return MultiMapDataSerializerHook.F_ID;
+    }
+
+    @Override
+    public int getId() {
+        return MultiMapDataSerializerHook.MULTIMAP_RECORD;
     }
 }

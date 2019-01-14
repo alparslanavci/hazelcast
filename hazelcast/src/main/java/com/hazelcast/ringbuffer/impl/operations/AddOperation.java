@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,14 +25,19 @@ import com.hazelcast.spi.BackupAwareOperation;
 import com.hazelcast.spi.Notifier;
 import com.hazelcast.spi.Operation;
 import com.hazelcast.spi.WaitNotifyKey;
+import com.hazelcast.spi.impl.MutatingOperation;
 
 import java.io.IOException;
 
 import static com.hazelcast.ringbuffer.OverflowPolicy.FAIL;
 import static com.hazelcast.ringbuffer.impl.RingbufferDataSerializerHook.ADD_OPERATION;
 
-public class AddOperation extends AbstractRingBufferOperation
-        implements Notifier, BackupAwareOperation {
+/**
+ * Adds a new ring buffer item. The master node will add the item into the ring buffer, generating a new sequence ID while
+ * the backup operation will put the item under the sequence ID that the master generated. This is to avoid differences
+ * in ring buffer data structures.
+ */
+public class AddOperation extends AbstractRingBufferOperation implements Notifier, BackupAwareOperation, MutatingOperation {
 
     private Data item;
     private long resultSequence;
@@ -92,7 +97,7 @@ public class AddOperation extends AbstractRingBufferOperation
 
     @Override
     public Operation getBackupOperation() {
-        return new AddBackupOperation(name, item);
+        return new AddBackupOperation(name, resultSequence, item);
     }
 
     @Override

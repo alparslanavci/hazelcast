@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,17 +17,17 @@
 package com.hazelcast.map.merge;
 
 import com.hazelcast.core.EntryView;
+import com.hazelcast.map.impl.MapDataSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
+import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 
 import java.io.IOException;
 
-
 /**
- * PassThroughMergePolicy causes the merging entry to be merged from source to destination map
- * unless merging entry is null.
+ * Merges map entries from source to destination directly unless the merging entry is {@code null}.
  */
-public class PassThroughMergePolicy implements MapMergePolicy {
+public class PassThroughMergePolicy implements MapMergePolicy, IdentifiedDataSerializable {
 
     @Override
     public Object merge(String mapName, EntryView mergingEntry, EntryView existingEntry) {
@@ -40,5 +40,15 @@ public class PassThroughMergePolicy implements MapMergePolicy {
 
     @Override
     public void readData(ObjectDataInput in) throws IOException {
+    }
+
+    @Override
+    public int getFactoryId() {
+        return MapDataSerializerHook.F_ID;
+    }
+
+    @Override
+    public int getId() {
+        return MapDataSerializerHook.PASS_THROUGH_MERGE_POLICY;
     }
 }

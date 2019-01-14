@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,46 +25,47 @@ import com.hazelcast.collection.impl.list.ListService;
 import com.hazelcast.core.TransactionalList;
 import com.hazelcast.nio.serialization.Data;
 import com.hazelcast.util.Preconditions;
-import com.hazelcast.util.ThreadUtil;
+
+import static com.hazelcast.util.ThreadUtil.getThreadId;
 
 /**
  * Proxy implementation of {@link TransactionalList}.
  *
  * @param <E> the type of elements in this list
  */
-public class ClientTxnListProxy<E> extends AbstractClientTxnCollectionProxy<E> implements TransactionalList<E> {
+public class ClientTxnListProxy<E> extends AbstractClientTxnCollectionProxy implements TransactionalList<E> {
 
     public ClientTxnListProxy(String name, ClientTransactionContext transactionContext) {
         super(name, transactionContext);
     }
 
+    @Override
     public String getServiceName() {
         return ListService.SERVICE_NAME;
     }
 
+    @Override
     public boolean add(E e) {
         Preconditions.checkNotNull(e);
         Data value = toData(e);
-        ClientMessage request = TransactionalListAddCodec.encodeRequest(name, getTransactionId()
-                , ThreadUtil.getThreadId(), value);
+        ClientMessage request = TransactionalListAddCodec.encodeRequest(name, getTransactionId(), getThreadId(), value);
         ClientMessage response = invoke(request);
         return TransactionalListAddCodec.decodeResponse(response).response;
     }
 
+    @Override
     public boolean remove(E e) {
         Preconditions.checkNotNull(e);
         Data value = toData(e);
-        ClientMessage request = TransactionalListRemoveCodec.encodeRequest(name, getTransactionId()
-                , ThreadUtil.getThreadId(), value);
+        ClientMessage request = TransactionalListRemoveCodec.encodeRequest(name, getTransactionId(), getThreadId(), value);
         ClientMessage response = invoke(request);
         return TransactionalListRemoveCodec.decodeResponse(response).response;
     }
 
+    @Override
     public int size() {
-        ClientMessage request = TransactionalListSizeCodec.encodeRequest(name, getTransactionId()
-                , ThreadUtil.getThreadId());
+        ClientMessage request = TransactionalListSizeCodec.encodeRequest(name, getTransactionId(), getThreadId());
         ClientMessage response = invoke(request);
         return TransactionalListSizeCodec.decodeResponse(response).response;
     }
-
 }

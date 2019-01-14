@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import com.hazelcast.cache.impl.CacheEventData;
 import com.hazelcast.cache.impl.CacheEventListener;
 import com.hazelcast.cache.impl.CacheEventSet;
 import com.hazelcast.cache.impl.CacheService;
-import com.hazelcast.client.ClientEndpoint;
+import com.hazelcast.client.impl.ClientEndpoint;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.codec.CacheAddEntryListenerCodec;
 import com.hazelcast.client.impl.protocol.task.AbstractCallableMessageTask;
@@ -34,9 +34,7 @@ import com.hazelcast.security.permission.CachePermission;
 import com.hazelcast.spi.EventRegistration;
 import com.hazelcast.spi.ListenerWrapperEventFilter;
 import com.hazelcast.spi.NotifiableEventListener;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-import java.io.Serializable;
 import java.security.Permission;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -56,7 +54,6 @@ public class CacheAddEntryListenerMessageTask
 
     @Override
     protected Object call() {
-        ClientEndpoint endpoint = getEndpoint();
         final CacheService service = getService(CacheService.SERVICE_NAME);
         CacheEntryListener cacheEntryListener = new CacheEntryListener(endpoint, this);
 
@@ -71,16 +68,13 @@ public class CacheAddEntryListenerMessageTask
         return registrationId;
     }
 
-    @SuppressFBWarnings(value = "SE_NO_SERIALVERSIONID",
-            justification = "Class is Serializable, but doesn't define serialVersionUID")
     private static final class CacheEntryListener
             implements CacheEventListener,
             NotifiableEventListener<CacheService>,
-            ListenerWrapperEventFilter,
-            Serializable {
+            ListenerWrapperEventFilter {
 
-        private final transient ClientEndpoint endpoint;
-        private final transient CacheAddEntryListenerMessageTask cacheAddEntryListenerMessageTask;
+        private final ClientEndpoint endpoint;
+        private final CacheAddEntryListenerMessageTask cacheAddEntryListenerMessageTask;
 
         private CacheEntryListener(ClientEndpoint endpoint,
                                    CacheAddEntryListenerMessageTask cacheAddEntryListenerMessageTask) {

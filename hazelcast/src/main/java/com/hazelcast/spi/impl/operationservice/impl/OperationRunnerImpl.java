@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,14 +28,21 @@ import com.hazelcast.internal.metrics.MetricsProvider;
 import com.hazelcast.internal.metrics.MetricsRegistry;
 import com.hazelcast.internal.metrics.Probe;
 import com.hazelcast.internal.partition.InternalPartition;
+import com.hazelcast.internal.serialization.impl.SerializationServiceV1;
 import com.hazelcast.internal.util.counters.Counter;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.nio.Address;
 import com.hazelcast.nio.Connection;
+import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.Packet;
+import com.hazelcast.nio.serialization.Data;
+import com.hazelcast.nio.serialization.HazelcastSerializationException;
+import com.hazelcast.quorum.QuorumException;
 import com.hazelcast.quorum.impl.QuorumServiceImpl;
 import com.hazelcast.spi.BlockingOperation;
+import com.hazelcast.spi.CallStatus;
 import com.hazelcast.spi.Notifier;
+import com.hazelcast.spi.Offload;
 import com.hazelcast.spi.Operation;
 import com.hazelcast.spi.OperationResponseHandler;
 import com.hazelcast.spi.ReadonlyOperation;
@@ -54,12 +61,16 @@ import com.hazelcast.spi.impl.operationservice.impl.responses.ErrorResponse;
 import com.hazelcast.spi.impl.operationservice.impl.responses.NormalResponse;
 import com.hazelcast.util.ExceptionUtil;
 
-import java.util.concurrent.atomic.AtomicLong;
+import java.io.IOException;
 import java.util.logging.Level;
 
 import static com.hazelcast.internal.metrics.ProbeLevel.DEBUG;
+import static com.hazelcast.internal.util.counters.MwCounter.newMwCounter;
 import static com.hazelcast.internal.util.counters.SwCounter.newSwCounter;
-import static com.hazelcast.nio.IOUtil.extractOperationCallId;
+import static com.hazelcast.spi.CallStatus.DONE_RESPONSE_ORDINAL;
+import static com.hazelcast.spi.CallStatus.DONE_VOID_ORDINAL;
+import static com.hazelcast.spi.CallStatus.OFFLOAD_ORDINAL;
+import static com.hazelcast.spi.CallStatus.WAIT_ORDINAL;
 import static com.hazelcast.spi.OperationAccessor.setCallerAddress;
 import static com.hazelcast.spi.OperationAccessor.setConnection;
 import static com.hazelcast.spi.impl.OperationResponseHandlerFactory.createEmptyResponseHandler;
@@ -74,6 +85,7 @@ import static java.util.logging.Level.WARNING;
 /**
  * Responsible for processing an Operation.
  */
+@SuppressWarnings("checkstyle:classfanoutcomplexity")
 class OperationRunnerImpl extends OperationRunner implements MetricsProvider {
 
     static final int AD_HOC_PARTITION_ID = -2;
@@ -82,46 +94,58 @@ class OperationRunnerImpl extends OperationRunner implements MetricsProvider {
     private final OperationServiceImpl operationService;
     private final Node node;
     private final NodeEngineImpl nodeEngine;
-    private final AtomicLong executedOperationsCount;
 
     @Probe(level = DEBUG)
-    private final Counter count;
+    private final Counter executedOperationsCounter;
     private final Address thisAddress;
     private final boolean staleReadOnMigrationEnabled;
 
     private final Counter failedBackupsCounter;
     private final OperationBackupHandler backupHandler;
 
+    // has only meaning for metrics.
+    private final int genericId;
+
     // This field doesn't need additional synchronization, since a partition-specific OperationRunner
     // will never be called concurrently.
     private InternalPartition internalPartition;
 
-    private final OperationResponseHandler remoteResponseHandler;
+    private final OutboundResponseHandler outboundResponseHandler;
 
     // When partitionId >= 0, it is a partition specific
     // when partitionId = -1, it is generic
     // when partitionId = -2, it is ad hoc
     // an ad-hoc OperationRunner can only process generic operations, but it can be shared between threads
     // and therefor the {@link OperationRunner#currentTask()} always returns null
-    OperationRunnerImpl(OperationServiceImpl operationService, int partitionId, Counter failedBackupsCounter) {
+    OperationRunnerImpl(OperationServiceImpl operationService, int partitionId, int genericId, Counter failedBackupsCounter) {
         super(partitionId);
+        this.genericId = genericId;
         this.operationService = operationService;
         this.logger = operationService.node.getLogger(OperationRunnerImpl.class);
         this.node = operationService.node;
         this.thisAddress = node.getThisAddress();
         this.nodeEngine = operationService.nodeEngine;
-        this.remoteResponseHandler = new RemoteInvocationResponseHandler(operationService);
-        this.executedOperationsCount = operationService.completedOperationsCount;
+        this.outboundResponseHandler = operationService.outboundResponseHandler;
         this.staleReadOnMigrationEnabled = !node.getProperties().getBoolean(DISABLE_STALE_READ_ON_PARTITION_MIGRATION);
         this.failedBackupsCounter = failedBackupsCounter;
         this.backupHandler = operationService.backupHandler;
-        this.count = partitionId >= 0 ? newSwCounter() : null;
+        // only a ad-hoc operation runner will be called concurrently
+        this.executedOperationsCounter = partitionId == AD_HOC_PARTITION_ID ? newMwCounter() : newSwCounter();
+    }
+
+    @Override
+    public long executedOperationsCount() {
+        return executedOperationsCounter.get();
     }
 
     @Override
     public void provideMetrics(MetricsRegistry registry) {
         if (partitionId >= 0) {
             registry.scanAndRegister(this, "operation.partition[" + partitionId + "]");
+        } else if (partitionId == -1) {
+            registry.scanAndRegister(this, "operation.generic[" + genericId + "]");
+        } else {
+            registry.scanAndRegister(this, "operation.adhoc");
         }
     }
 
@@ -149,11 +173,7 @@ class OperationRunnerImpl extends OperationRunner implements MetricsProvider {
 
     @Override
     public void run(Operation op) {
-        if (count != null) {
-            count.inc();
-        }
-
-        executedOperationsCount.incrementAndGet();
+        executedOperationsCounter.inc();
 
         boolean publishCurrentTask = publishCurrentTask();
 
@@ -174,19 +194,52 @@ class OperationRunnerImpl extends OperationRunner implements MetricsProvider {
 
             op.beforeRun();
 
-            if (waitingNeeded(op)) {
-                return;
-            }
-
-            op.run();
-            handleResponse(op);
-            afterRun(op);
+            call(op);
         } catch (Throwable e) {
             handleOperationError(op, e);
         } finally {
             if (publishCurrentTask) {
                 currentTask = null;
             }
+        }
+    }
+
+    private void call(Operation op) throws Exception {
+        CallStatus callStatus = op.call();
+
+        switch (callStatus.ordinal()) {
+            case DONE_RESPONSE_ORDINAL:
+                handleResponse(op);
+                afterRun(op);
+                break;
+            case DONE_VOID_ORDINAL:
+                op.afterRun();
+                break;
+            case OFFLOAD_ORDINAL:
+                op.afterRun();
+                Offload offload = (Offload) callStatus;
+                offload.init(nodeEngine, operationService.asyncOperations);
+                offload.start();
+                break;
+            case WAIT_ORDINAL:
+                nodeEngine.getOperationParker().park((BlockingOperation) op);
+                break;
+            default:
+                throw new IllegalStateException();
+        }
+    }
+
+    private void handleResponse(Operation op) throws Exception {
+        int backupAcks = backupHandler.sendBackups(op);
+
+        try {
+            Object response = op.getResponse();
+            if (backupAcks > 0) {
+                response = new NormalResponse(response, op.getCallId(), backupAcks, op.isUrgent());
+            }
+            op.sendResponse(response);
+        } catch (ResponseAlreadySentException e) {
+            logOperationError(op, e);
         }
     }
 
@@ -210,33 +263,26 @@ class OperationRunnerImpl extends OperationRunner implements MetricsProvider {
             throw new IllegalStateException("Cluster is in " + ClusterState.PASSIVE + " state! Operation: " + op);
         }
 
-        // Operation has no partition id. So it is sent to this node in purpose.
+        // Operation has no partition ID, so it's sent to this node in purpose.
         // Operation will fail since node is shutting down or cluster is passive.
         if (op.getPartitionId() < 0) {
-            throw new HazelcastInstanceNotActiveException("Member " + localAddress + "+ is currently passive! Operation: " + op);
+            throw new HazelcastInstanceNotActiveException("Member " + localAddress + " is currently passive! Operation: " + op);
         }
 
         // Custer is not passive but this node is shutting down.
-        // Since operation has a partition id, it must be retried on another node.
+        // Since operation has a partition ID, it must be retried on another node.
         throw new RetryableHazelcastException("Member " + localAddress + " is currently shutting down! Operation: " + op);
     }
 
+    /**
+     * Ensures that the quorum is present if the quorum is configured and the operation service is quorum aware.
+     *
+     * @param op the operation for which the quorum must be checked for presence
+     * @throws QuorumException if the operation requires a quorum and the quorum is not present
+     */
     private void ensureQuorumPresent(Operation op) {
         QuorumServiceImpl quorumService = operationService.nodeEngine.getQuorumService();
         quorumService.ensureQuorumPresent(op);
-    }
-
-    private boolean waitingNeeded(Operation op) {
-        if (!(op instanceof BlockingOperation)) {
-            return false;
-        }
-
-        BlockingOperation blockingOperation = (BlockingOperation) op;
-        if (blockingOperation.shouldWait()) {
-            nodeEngine.getOperationParker().park(blockingOperation);
-            return true;
-        }
-        return false;
     }
 
     private boolean timeout(Operation op) {
@@ -246,29 +292,6 @@ class OperationRunnerImpl extends OperationRunner implements MetricsProvider {
 
         op.sendResponse(new CallTimeoutResponse(op.getCallId(), op.isUrgent()));
         return true;
-    }
-
-    private void handleResponse(Operation op) throws Exception {
-        boolean returnsResponse = op.returnsResponse();
-        int backupAcks = backupHandler.sendBackups(op);
-
-        if (!returnsResponse) {
-            return;
-        }
-
-        sendResponse(op, backupAcks);
-    }
-
-   private void sendResponse(Operation op, int backupAcks) {
-        try {
-            Object response = op.getResponse();
-            if (backupAcks > 0) {
-                response = new NormalResponse(response, op.getCallId(), backupAcks, op.isUrgent());
-            }
-            op.sendResponse(response);
-        } catch (ResponseAlreadySentException e) {
-            logOperationError(op, e);
-        }
     }
 
     private void afterRun(Operation op) {
@@ -303,7 +326,7 @@ class OperationRunnerImpl extends OperationRunner implements MetricsProvider {
             internalPartition = nodeEngine.getPartitionService().getPartition(partitionId);
         }
 
-        if (retryDuringMigration(op) && internalPartition.isMigrating()) {
+        if (!isAllowedToRetryDuringMigration(op) && internalPartition.isMigrating()) {
             throw new PartitionMigratingException(thisAddress, partitionId,
                     op.getClass().getName(), op.getServiceName());
         }
@@ -315,8 +338,8 @@ class OperationRunnerImpl extends OperationRunner implements MetricsProvider {
         }
     }
 
-    private boolean retryDuringMigration(Operation op) {
-        return !((op instanceof ReadonlyOperation && staleReadOnMigrationEnabled) || isMigrationOperation(op));
+    private boolean isAllowedToRetryDuringMigration(Operation op) {
+        return (op instanceof ReadonlyOperation && staleReadOnMigrationEnabled) || isMigrationOperation(op);
     }
 
     private void handleOperationError(Operation operation, Throwable e) {
@@ -333,22 +356,21 @@ class OperationRunnerImpl extends OperationRunner implements MetricsProvider {
 
         if (operation instanceof Backup) {
             failedBackupsCounter.inc();
-        }
-
-        if (!operation.returnsResponse()) {
             return;
         }
 
+        // A response is sent regardless of the Operation.returnsResponse method because some operations do want to send
+        // back a response, but they didn't want to send it yet but they ran into some kind of error. If on the receiving
+        // side no invocation is waiting, the response is ignored.
         sendResponseAfterOperationError(operation, e);
     }
 
     private void sendResponseAfterOperationError(Operation operation, Throwable e) {
-        OperationResponseHandler responseHandler = operation.getOperationResponseHandler();
         try {
             if (node.getState() != NodeState.SHUT_DOWN) {
-                responseHandler.sendResponse(operation, e);
-            } else if (responseHandler.isLocal()) {
-                responseHandler.sendResponse(operation, new HazelcastInstanceNotActiveException());
+                operation.sendResponse(e);
+            } else if (operation.executedLocally()) {
+                operation.sendResponse(new HazelcastInstanceNotActiveException());
             }
         } catch (Throwable t) {
             logger.warning("While sending op error... op: " + operation + ", error: " + e, t);
@@ -391,8 +413,8 @@ class OperationRunnerImpl extends OperationRunner implements MetricsProvider {
             run(op);
         } catch (Throwable throwable) {
             // If exception happens we need to extract the callId from the bytes directly!
-            long callId = extractOperationCallId(packet, node.getSerializationService());
-            operationService.send(new ErrorResponse(throwable, callId, packet.isUrgent()), caller);
+            long callId = extractOperationCallId(packet);
+            outboundResponseHandler.send(caller, new ErrorResponse(throwable, callId, packet.isUrgent()));
             logOperationDeserializationException(throwable, callId);
             throw ExceptionUtil.rethrow(throwable);
         } finally {
@@ -402,12 +424,24 @@ class OperationRunnerImpl extends OperationRunner implements MetricsProvider {
         }
     }
 
+    /**
+     * This method has a direct dependency on how objects are serialized.
+     * If the stream format is changed, this extraction method must be changed as well.
+     * <p>
+     * It makes an assumption that the callId is the first long field in the serialized operation.
+     */
+    private long extractOperationCallId(Data data) throws IOException {
+        ObjectDataInput input = ((SerializationServiceV1) node.getSerializationService())
+                .initDataSerializableInputAndSkipTheHeader(data);
+        return input.readLong();
+    }
+
     private void setOperationResponseHandler(Operation op) {
-        OperationResponseHandler handler = remoteResponseHandler;
+        OperationResponseHandler handler = outboundResponseHandler;
         if (op.getCallId() == 0) {
             if (op.returnsResponse()) {
                 throw new HazelcastException(
-                        "Op: " + op + " can not return response without call-id!");
+                        "Operation " + op + " wants to return a response, but doesn't have a call ID");
             }
             handler = createEmptyResponseHandler();
         }
@@ -448,15 +482,26 @@ class OperationRunnerImpl extends OperationRunner implements MetricsProvider {
             }
         } else if (t instanceof OutOfMemoryError) {
             try {
-                logger.log(SEVERE, t.getMessage(), t);
+                logException(t.getMessage(), t, SEVERE);
             } catch (Throwable ignored) {
-                logger.log(SEVERE, ignored.getMessage(), t);
+                logger.severe(ignored.getMessage(), t);
+            }
+        } else if (t instanceof HazelcastSerializationException) {
+            if (!node.getClusterService().isJoined()) {
+                logException("A serialization exception occurred while joining a cluster, is this member compatible with "
+                        + "other members of the cluster?", t, SEVERE);
+            } else {
+                logException(t.getMessage(), t, nodeEngine.isRunning() ? SEVERE : FINEST);
             }
         } else {
-            final Level level = nodeEngine.isRunning() ? SEVERE : FINEST;
-            if (logger.isLoggable(level)) {
-                logger.log(level, t.getMessage(), t);
-            }
+            logException(t.getMessage(), t, nodeEngine.isRunning() ? SEVERE : FINEST);
         }
     }
+
+    private void logException(String message, Throwable t, Level level) {
+        if (logger.isLoggable(level)) {
+            logger.log(level, message, t);
+        }
+    }
+
 }

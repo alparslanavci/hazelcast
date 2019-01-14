@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,8 +26,15 @@ import com.hazelcast.spi.BackupOperation;
 import java.io.IOException;
 
 /**
-* Reserve offer backup operation for the transactional queue.
-*/
+ * Transaction prepare operation for a queue offer, executed on the backup replica.
+ * <p>
+ * Adds the item ID to the collection of IDs offered by a transaction.
+ * The check if the queue can accomodate for all items offered in a
+ * transaction is done on the partition owner.
+ *
+ * @see TxnReserveOfferOperation
+ * @see com.hazelcast.core.TransactionalQueue#offer(Object)
+ */
 public class TxnReserveOfferBackupOperation extends QueueOperation implements BackupOperation {
 
     private long itemId;

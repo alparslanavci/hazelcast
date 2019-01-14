@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,7 +45,6 @@ import com.hazelcast.mapreduce.aggregation.impl.LongAvgAggregation;
 import com.hazelcast.mapreduce.aggregation.impl.LongMaxAggregation;
 import com.hazelcast.mapreduce.aggregation.impl.LongMinAggregation;
 import com.hazelcast.mapreduce.aggregation.impl.LongSumAggregation;
-import com.hazelcast.spi.annotation.Beta;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -56,8 +55,10 @@ import java.util.Set;
  * This class is used to access the Hazelcast predefined set of aggregations in a type-safe
  * way.
  * @since 3.3
+ * @deprecated Use fast-aggregations {@link com.hazelcast.aggregation.Aggregators}
  */
-@Beta
+@Deprecated
+@SuppressWarnings("checkstyle:classdataabstractioncoupling")
 public final class Aggregations {
 
     private Aggregations() {

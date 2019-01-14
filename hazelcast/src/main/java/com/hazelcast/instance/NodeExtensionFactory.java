@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,13 +35,15 @@ public final class NodeExtensionFactory {
     public static NodeExtension create(Node node) {
         try {
             ClassLoader classLoader = node.getConfigClassLoader();
-            Iterator<Class<NodeExtension>> iter = ServiceLoader.classIterator(FACTORY_ID, classLoader);
+            Iterator<Class<NodeExtension>> iter = ServiceLoader.classIterator(NodeExtension.class, FACTORY_ID, classLoader);
             while (iter.hasNext()) {
                 Class<NodeExtension> clazz = iter.next();
                 if (!(clazz.equals(DefaultNodeExtension.class))) {
                     if (clazz.getName().equals(DefaultNodeExtension.class.getName())) {
                         Logger.getLogger(NodeExtensionFactory.class).warning(
                                 "DefaultNodeExtension class has been loaded by two different class-loaders. "
+                                        + "Classloader 1: " + NodeExtensionFactory.class.getClassLoader() + ", "
+                                        + "Classloader 2: " + clazz.getClassLoader() + ". "
                                         + "Are you running Hazelcast in an OSGi environment? "
                                         + "If so, set the bundle class-loader in the Config using the setClassloader() method");
                     }

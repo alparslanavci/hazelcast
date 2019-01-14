@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,14 +26,17 @@ import com.hazelcast.nio.serialization.Data;
 import com.hazelcast.spi.Notifier;
 import com.hazelcast.spi.Operation;
 import com.hazelcast.spi.WaitNotifyKey;
+import com.hazelcast.spi.impl.MutatingOperation;
 
 import java.io.IOException;
 
 /**
- * Offer operation for the Transactional Queue.
+ * Transaction commit operation for a queue offer, executed on the primary replica.
+ *
+ * @see com.hazelcast.core.TransactionalQueue#offer(Object)
+ * @see TxnReserveOfferOperation
  */
-
-public class TxnOfferOperation extends BaseTxnQueueOperation implements Notifier {
+public class TxnOfferOperation extends BaseTxnQueueOperation implements Notifier, MutatingOperation {
 
 
     private Data data;

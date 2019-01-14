@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.hazelcast.map.impl.query;
 
 import com.hazelcast.config.CacheDeserializedValues;
@@ -16,11 +32,11 @@ import com.hazelcast.query.Predicate;
 import com.hazelcast.query.PredicateBuilder;
 import com.hazelcast.query.Predicates;
 import com.hazelcast.query.QueryException;
-import com.hazelcast.query.SampleObjects;
-import com.hazelcast.query.SampleObjects.Employee;
-import com.hazelcast.query.SampleObjects.State;
-import com.hazelcast.query.SampleObjects.Value;
-import com.hazelcast.query.SampleObjects.ValueType;
+import com.hazelcast.query.SampleTestObjects;
+import com.hazelcast.query.SampleTestObjects.Employee;
+import com.hazelcast.query.SampleTestObjects.State;
+import com.hazelcast.query.SampleTestObjects.Value;
+import com.hazelcast.query.SampleTestObjects.ValueType;
 import com.hazelcast.query.SqlPredicate;
 import com.hazelcast.spi.properties.GroupProperty;
 import com.hazelcast.spi.properties.HazelcastProperties;
@@ -61,10 +77,10 @@ public class QueryBasicTest extends HazelcastTestSupport {
         Config config = getConfig();
         HazelcastProperties properties = new HazelcastProperties(config);
         boolean parallelEvaluation = properties.getBoolean(GroupProperty.QUERY_PREDICATE_PARALLEL_EVALUATION);
-        assertEquals(false, parallelEvaluation);
+        assertFalse(parallelEvaluation);
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testInPredicateWithEmptyArray() {
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(2);
         Config cfg = getConfig();
@@ -80,7 +96,81 @@ public class QueryBasicTest extends HazelcastTestSupport {
         assertEquals(values.size(), 0);
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test
+    public void testQueryIndexNullValues() {
+        final HazelcastInstance instance = createHazelcastInstance(getConfig());
+        final IMap<String, Value> map = instance.getMap("default");
+        map.addIndex("name", true);
+        map.put("first", new Value("first", 1));
+        map.put("second", new Value(null, 2));
+        map.put("third", new Value(null, 3));
+        final Predicate predicate = new SqlPredicate("name=null");
+        final Collection<Value> values = map.values(predicate);
+
+        final int[] expectedIndexValues = {2, 3};
+        assertEquals(expectedIndexValues.length, values.size());
+
+        final int[] actualIndexValues = new int[values.size()];
+        int i = 0;
+        for (Value value : values) {
+            actualIndexValues[i++] = value.getIndex();
+        }
+        Arrays.sort(actualIndexValues);
+        assertArrayEquals(expectedIndexValues, actualIndexValues);
+    }
+
+    @Test
+    public void testLesserEqual() {
+        final HazelcastInstance instance = createHazelcastInstance(getConfig());
+        final IMap<String, Value> map = instance.getMap("default");
+        map.addIndex("index", true);
+        for (int i = 0; i < 10; i++) {
+            map.put("" + i, new Value("" + i, i));
+        }
+        final Predicate predicate = new SqlPredicate("index<=5");
+        final Collection<Value> values = map.values(predicate);
+
+
+        final int[] expectedIndexValues = new int[6];
+        for (int i = 0; i < expectedIndexValues.length; i++) {
+            expectedIndexValues[i] = i;
+        }
+        assertEquals(expectedIndexValues.length, values.size());
+
+        final int[] actualIndexValues = new int[values.size()];
+        int i = 0;
+        for (Value value : values) {
+            actualIndexValues[i++] = value.getIndex();
+        }
+        Arrays.sort(actualIndexValues);
+        assertArrayEquals(expectedIndexValues, actualIndexValues);
+    }
+
+    @Test
+    public void testNotEqual() {
+        final HazelcastInstance instance = createHazelcastInstance(getConfig());
+        final IMap<String, Value> map = instance.getMap("default");
+        map.addIndex("name", true);
+        map.put("first", new Value("first", 1));
+        map.put("second", new Value(null, 2));
+        map.put("third", new Value(null, 3));
+        final Predicate predicate = new SqlPredicate("name != null");
+
+
+        final Collection<Value> values = map.values(predicate);
+        final int[] expectedIndexValues = {1};
+        assertEquals(expectedIndexValues.length, values.size());
+
+        final int[] actualIndexValues = new int[values.size()];
+        int i = 0;
+        for (Value value : values) {
+            actualIndexValues[i++] = value.getIndex();
+        }
+        Arrays.sort(actualIndexValues);
+        assertArrayEquals(expectedIndexValues, actualIndexValues);
+    }
+
+    @Test(timeout = 1000 * 90)
     public void issue393SqlIn() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<String, Value> map = instance.getMap("default");
@@ -97,12 +187,12 @@ public class QueryBasicTest extends HazelcastTestSupport {
         for (Value configObject : values) {
             names.add(configObject.getName());
         }
-        String[] array = names.toArray(new String[names.size()]);
+        String[] array = names.toArray(new String[0]);
         Arrays.sort(array);
         assertArrayEquals(names.toString(), expectedValues, array);
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void issue393SqlInInteger() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<String, Value> map = instance.getMap("default");
@@ -119,15 +209,15 @@ public class QueryBasicTest extends HazelcastTestSupport {
         for (Value configObject : values) {
             names.add(configObject.getName());
         }
-        String[] array = names.toArray(new String[names.size()]);
+        String[] array = names.toArray(new String[0]);
         Arrays.sort(array);
         assertArrayEquals(names.toString(), expectedValues, array);
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testInPredicate() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
-        IMap<String, SampleObjects.ValueType> map = instance.getMap("testIteratorContract");
+        IMap<String, SampleTestObjects.ValueType> map = instance.getMap("testIteratorContract");
         map.put("1", new ValueType("one"));
         map.put("2", new ValueType("two"));
         map.put("3", new ValueType("three"));
@@ -137,12 +227,12 @@ public class QueryBasicTest extends HazelcastTestSupport {
         map.put("7", new ValueType("seven"));
         Predicate predicate = new SqlPredicate("typeName in ('one','two')");
         for (int i = 0; i < 10; i++) {
-            Collection<SampleObjects.ValueType> values = map.values(predicate);
+            Collection<SampleTestObjects.ValueType> values = map.values(predicate);
             assertEquals(2, values.size());
         }
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testInstanceOfPredicate() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<String, Object> map = instance.getMap("testInstanceOfPredicate");
@@ -156,13 +246,13 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
         Collection<Object> values = map.values(linkedListPredicate);
         assertEquals(1, values.size());
-        assertTrue(values.contains(linkedList));
+        assertContains(values, linkedList);
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testIteratorContract() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
-        IMap<String, SampleObjects.ValueType> map = instance.getMap("testIteratorContract");
+        IMap<String, SampleTestObjects.ValueType> map = instance.getMap("testIteratorContract");
         map.put("1", new ValueType("one"));
         map.put("2", new ValueType("two"));
         map.put("3", new ValueType("three"));
@@ -190,7 +280,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
     }
 
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void issue393Fail() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<String, Value> map = instance.getMap("default");
@@ -200,11 +290,11 @@ public class QueryBasicTest extends HazelcastTestSupport {
             map.put("0", v);
             fail();
         } catch (Throwable e) {
-            assertTrue(e.getMessage().contains("There is no suitable accessor for 'qwe'"));
+            assertContains(e.getMessage(), "There is no suitable accessor for 'qwe'");
         }
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void negativeDouble() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<String, Employee> map = instance.getMap("default");
@@ -221,7 +311,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
         assertEquals(2, values.size());
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void issue393SqlEq() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<String, Value> map = instance.getMap("default");
@@ -238,12 +328,12 @@ public class QueryBasicTest extends HazelcastTestSupport {
         for (Value configObject : values) {
             names.add(configObject.getName());
         }
-        String[] array = names.toArray(new String[names.size()]);
+        String[] array = names.toArray(new String[0]);
         Arrays.sort(array);
         assertArrayEquals(names.toString(), expectedValues, array);
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void issue393() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<String, Value> map = instance.getMap("default");
@@ -260,12 +350,12 @@ public class QueryBasicTest extends HazelcastTestSupport {
         for (Value configObject : values) {
             names.add(configObject.getName());
         }
-        String[] array = names.toArray(new String[names.size()]);
+        String[] array = names.toArray(new String[0]);
         Arrays.sort(array);
         assertArrayEquals(names.toString(), expectedValues, array);
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testWithDashInTheNameAndSqlPredicate() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<String, Employee> map = instance.getMap("employee");
@@ -282,7 +372,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
         }
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void queryWithThis() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<String, String> map = instance.getMap("queryWithThis");
@@ -299,7 +389,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
     /**
      * Test for issue 711
      */
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testPredicateWithEntryKeyObject() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<String, Integer> map = instance.getMap("testPredicateWithEntryKeyObject");
@@ -320,7 +410,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
     /**
      * Github issues 98 and 131
      */
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testPredicateStringAttribute() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<Integer, Value> map = instance.getMap("testPredicateStringWithString");
@@ -330,7 +420,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
     /**
      * Github issues 98 and 131
      */
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testPredicateStringAttributesWithIndex() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<Integer, Value> map = instance.getMap("testPredicateStringWithStringIndex");
@@ -358,14 +448,14 @@ public class QueryBasicTest extends HazelcastTestSupport {
         assertEquals(6, map.values(new PredicateBuilder().getEntryObject().get("name").greaterEqual("gh")).size());
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testPredicateDateAttribute() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<Integer, Date> map = instance.getMap("testPredicateDateAttribute");
         testPredicateDateAttribute(map);
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testPredicateDateAttributeWithIndex() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<Integer, Date> map = instance.getMap("testPredicateDateAttribute");
@@ -395,18 +485,18 @@ public class QueryBasicTest extends HazelcastTestSupport {
         cal.set(2012, Calendar.FEBRUARY, 10);
         Date d2 = cal.getTime();
         assertEquals(3, map.values(new PredicateBuilder().getEntryObject().get("this").between(d1, d2)).size());
-        assertEquals(3, map.values(new SqlPredicate("this between 'Mon Nov 10 11:43:05 EET 2003'" +
-                " and 'Fri Feb 10 11:43:05 EET 2012'")).size());
+        assertEquals(3, map.values(new SqlPredicate("this between 'Mon Nov 10 11:43:05 EET 2003'"
+                + " and 'Fri Feb 10 11:43:05 EET 2012'")).size());
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testPredicateEnumAttribute() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<Integer, NodeType> map = instance.getMap("testPredicateEnumAttribute");
         testPredicateEnumAttribute(map);
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testPredicateEnumAttributeWithIndex() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<Integer, NodeType> map = instance.getMap("testPredicateEnumAttribute");
@@ -436,7 +526,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
         CSHARP_CLIENT
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testPredicateCustomAttribute() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<Integer, CustomObject> map = instance.getMap("testPredicateCustomAttribute");
@@ -543,7 +633,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
         }
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testInvalidSqlPredicate() {
         Config cfg = getConfig();
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(1);
@@ -556,36 +646,36 @@ public class QueryBasicTest extends HazelcastTestSupport {
             map.values(new SqlPredicate("invalid_sql"));
             fail("Should fail because of invalid SQL!");
         } catch (RuntimeException e) {
-            assertTrue(e.getMessage().contains("There is no suitable accessor for 'invalid_sql'"));
+            assertContains(e.getMessage(), "There is no suitable accessor for 'invalid_sql'");
         }
         try {
             map.values(new SqlPredicate("invalid sql"));
             fail("Should fail because of invalid SQL!");
         } catch (RuntimeException e) {
-            assertTrue(e.getMessage().contains("Invalid SQL: [invalid sql]"));
+            assertContains(e.getMessage(), "Invalid SQL: [invalid sql]");
         }
         try {
             map.values(new SqlPredicate("invalid and sql"));
             fail("Should fail because of invalid SQL!");
         } catch (RuntimeException e) {
-            assertTrue(e.getMessage().contains("There is no suitable accessor for 'invalid'"));
+            assertContains(e.getMessage(), "There is no suitable accessor for 'invalid'");
         }
         try {
             map.values(new SqlPredicate("invalid sql and"));
             fail("Should fail because of invalid SQL!");
         } catch (RuntimeException e) {
-            assertTrue(e.getMessage().contains("There is no suitable accessor for 'invalid'"));
+            assertContains(e.getMessage(), "There is no suitable accessor for 'invalid'");
         }
         try {
             map.values(new SqlPredicate(""));
             fail("Should fail because of invalid SQL!");
         } catch (RuntimeException e) {
-            assertTrue(e.getMessage().contains("Invalid SQL: []"));
+            assertContains(e.getMessage(), "Invalid SQL: []");
         }
         assertEquals(2, map.values(new SqlPredicate("age=1 and name like 'e%'")).size());
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testIndexingEnumAttributeIssue597() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<Integer, Value> map = instance.getMap("default");
@@ -610,7 +700,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
     /**
      * see pull request 616
      */
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testIndexingEnumAttributeWithSqlIssue597() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<Integer, Value> map = instance.getMap("default");
@@ -632,7 +722,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
         assertArrayEquals(indexes, expectedValues);
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testMultipleOrPredicatesIssue885WithoutIndex() {
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
         HazelcastInstance instance = factory.newHazelcastInstance(getConfig());
@@ -641,7 +731,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
         testMultipleOrPredicates(map);
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testMultipleOrPredicatesIssue885WithIndex() {
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
         HazelcastInstance instance = factory.newHazelcastInstance(getConfig());
@@ -651,7 +741,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
         testMultipleOrPredicates(map);
     }
 
-    @Test(timeout = 1000 * 60)
+    @Test(timeout = 1000 * 90)
     public void testMultipleOrPredicatesIssue885WithDoubleIndex() {
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
         HazelcastInstance instance = factory.newHazelcastInstance(getConfig());

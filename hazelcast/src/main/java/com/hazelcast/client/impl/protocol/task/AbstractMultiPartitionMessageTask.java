@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.hazelcast.client.impl.protocol.task;
 
-import com.hazelcast.client.ClientEndpoint;
 import com.hazelcast.client.impl.operations.OperationFactoryWrapper;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.instance.Node;
@@ -35,7 +34,6 @@ public abstract class AbstractMultiPartitionMessageTask<P> extends AbstractCalla
 
     @Override
     protected Object call() throws Exception {
-        ClientEndpoint endpoint = getEndpoint();
         OperationFactory operationFactory = new OperationFactoryWrapper(createOperationFactory(), endpoint.getUuid());
 
         final InternalOperationService operationService = nodeEngine.getOperationService();

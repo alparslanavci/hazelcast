@@ -1,9 +1,26 @@
+/*
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.hazelcast.transaction.impl;
 
+import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.test.AssertTask;
-import com.hazelcast.test.HazelcastSerialClassRunner;
+import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.QuickTest;
 import com.hazelcast.transaction.TransactionException;
@@ -28,7 +45,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.fail;
 
-@RunWith(HazelcastSerialClassRunner.class)
+@RunWith(HazelcastParallelClassRunner.class)
 @Category(QuickTest.class)
 public class TransactionImpl_TwoPhaseIntegrationTest extends HazelcastTestSupport {
 
@@ -40,8 +57,7 @@ public class TransactionImpl_TwoPhaseIntegrationTest extends HazelcastTestSuppor
 
     @Before
     public void setup() {
-        setLoggingLog4j();
-        cluster = createHazelcastInstanceFactory(2).newInstances();
+        cluster = createHazelcastInstanceFactory(2).newInstances(getConfig());
         localNodeEngine = getNodeEngineImpl(cluster[0]);
         localTxService = getTransactionManagerService(cluster[0]);
         remoteTxService = getTransactionManagerService(cluster[1]);
@@ -321,4 +337,12 @@ public class TransactionImpl_TwoPhaseIntegrationTest extends HazelcastTestSuppor
         });
     }
 
+    @Override
+    protected Config getConfig() {
+        Config config = new Config();
+        config.getSerializationConfig().addDataSerializableFactory(
+                MockTransactionLogRecord.MockTransactionLogRecordSerializerHook.F_ID,
+                new MockTransactionLogRecord.MockTransactionLogRecordSerializerHook().createFactory());
+        return config;
+    }
 }

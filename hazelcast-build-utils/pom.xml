@@ -1,5 +1,5 @@
 <!--
-  ~ Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+  ~ Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
   ~
   ~ Licensed under the Apache License, Version 2.0 (the "License");
   ~ you may not use this file except in compliance with the License.
@@ -25,13 +25,15 @@
     <parent>
         <groupId>com.hazelcast</groupId>
         <artifactId>hazelcast-root</artifactId>
-        <version>3.8-BUNDLE</version>
+        <version>3.11</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
     <properties>
-        <!-- needed for checkstyle/findbugs -->
+        <!-- needed for CheckStyle -->
         <main.basedir>${project.parent.basedir}</main.basedir>
+
+        <bndlib.version>1.50.0</bndlib.version>
     </properties>
 
     <build>
@@ -119,15 +121,15 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>net.sourceforge.findbugs</groupId>
+            <groupId>com.google.code.findbugs</groupId>
             <artifactId>annotations</artifactId>
-            <version>${findbugs.version}</version>
+            <version>${findbugs.annotations.version}</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>biz.aQute</groupId>
             <artifactId>bndlib</artifactId>
-            <version>1.50.0</version>
+            <version>${bndlib.version}</version>
         </dependency>
     </dependencies>
 </project>

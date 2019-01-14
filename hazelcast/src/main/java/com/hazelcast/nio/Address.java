@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.nio;
 
 import com.hazelcast.internal.cluster.impl.ClusterDataSerializerHook;
+import com.hazelcast.nio.serialization.BinaryInterface;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.util.AddressUtil;
 
@@ -33,6 +34,7 @@ import static com.hazelcast.util.StringUtil.stringToBytes;
 /**
  * Represents an address of a member in the cluster.
  */
+@BinaryInterface
 public final class Address implements IdentifiedDataSerializable {
 
     private static final byte IPV4 = 4;

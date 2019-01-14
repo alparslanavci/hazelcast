@@ -1,18 +1,18 @@
 /*
-* Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
-*
-*  Licensed under the Apache License, Version 2.0 (the "License");
-*  you may not use this file except in compliance with the License.
-*  You may obtain a copy of the License at
-*
-*  http://www.apache.org/licenses/LICENSE-2.0
-*
-*  Unless required by applicable law or agreed to in writing, software
-*  distributed under the License is distributed on an "AS IS" BASIS,
-*  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-*  See the License for the specific language governing permissions and
-*  limitations under the License.
-*/
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 package com.hazelcast.quorum.cache;
 
@@ -30,8 +30,8 @@ import com.hazelcast.quorum.QuorumListener;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
+import com.hazelcast.test.annotation.ParallelTest;
 import com.hazelcast.test.annotation.QuickTest;
-import com.hazelcast.util.EmptyStatement;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -41,14 +41,15 @@ import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 @RunWith(HazelcastSerialClassRunner.class)
-@Category(QuickTest.class)
+@Category({QuickTest.class, ParallelTest.class})
 public class CacheQuorumListenerTest extends HazelcastTestSupport {
 
     @Test
-    public void testQuorumFailureEventFiredWhenNodeCountBelowThreshold() throws Exception {
+    public void testQuorumFailureEventFiredWhenNodeCountBelowThreshold() {
         final CountDownLatch countDownLatch = new CountDownLatch(1);
         Config config = new Config();
         QuorumListenerConfig listenerConfig = new QuorumListenerConfig();
@@ -73,14 +74,14 @@ public class CacheQuorumListenerTest extends HazelcastTestSupport {
             cache.put(generateKeyOwnedBy(instance), 1);
             fail("Expected a QuorumException");
         } catch (QuorumException expected) {
-            EmptyStatement.ignore(expected);
+            ignore(expected);
         }
 
         assertOpenEventually(countDownLatch, 15);
     }
 
     @Test
-    public void testQuorumEventsFiredWhenNodeCountBelowThenAboveThreshold() throws Exception {
+    public void testQuorumEventsFiredWhenNodeCountBelowThenAboveThreshold() {
         final CountDownLatch belowLatch = new CountDownLatch(1);
         final CountDownLatch aboveLatch = new CountDownLatch(1);
         Config config = new Config();
@@ -109,7 +110,7 @@ public class CacheQuorumListenerTest extends HazelcastTestSupport {
             cache.put(generateKeyOwnedBy(instance1), 1);
             fail("Expected a QuorumException");
         } catch (QuorumException expected) {
-            EmptyStatement.ignore(expected);
+            ignore(expected);
         }
         assertOpenEventually(belowLatch, 15);
 
@@ -120,7 +121,7 @@ public class CacheQuorumListenerTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testDifferentQuorumsGetCorrectEvents() throws Exception {
+    public void testDifferentQuorumsGetCorrectEvents() {
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(3);
         final CountDownLatch quorumFailureLatch = new CountDownLatch(2);
         String fourNodeQuorumName = "fourNode";
@@ -165,19 +166,19 @@ public class CacheQuorumListenerTest extends HazelcastTestSupport {
             threeNode.put(generateKeyOwnedBy(h1), "bar");
             fail("Expected a QuorumException");
         } catch (QuorumException expected) {
-            EmptyStatement.ignore(expected);
+            ignore(expected);
         }
         try {
             fourNode.put(generateKeyOwnedBy(h1), "bar");
             fail("Expected a QuorumException");
         } catch (QuorumException expected) {
-            EmptyStatement.ignore(expected);
+            ignore(expected);
         }
         assertOpenEventually(quorumFailureLatch, 15);
     }
 
     @Test
-    public void testCustomResolverFiresQuorumFailureEvent() throws Exception {
+    public void testCustomResolverFiresQuorumFailureEvent() {
         final CountDownLatch countDownLatch = new CountDownLatch(1);
         Config config = new Config();
         QuorumListenerConfig listenerConfig = new QuorumListenerConfig();
@@ -211,14 +212,14 @@ public class CacheQuorumListenerTest extends HazelcastTestSupport {
             cache.put(generateKeyOwnedBy(instance), 1);
             fail("Expected a QuorumException");
         } catch (QuorumException expected) {
-            EmptyStatement.ignore(expected);
+            ignore(expected);
         }
 
         assertOpenEventually(countDownLatch, 15);
     }
 
     @Test
-    public void testQuorumEventProvidesCorrectMemberListSize() throws Exception {
+    public void testQuorumEventProvidesCorrectMemberListSize() {
         final CountDownLatch belowLatch = new CountDownLatch(1);
         Config config = new Config();
         QuorumListenerConfig listenerConfig = new QuorumListenerConfig();
@@ -226,8 +227,8 @@ public class CacheQuorumListenerTest extends HazelcastTestSupport {
             public void onChange(QuorumEvent quorumEvent) {
                 if (!quorumEvent.isPresent()) {
                     Collection<Member> currentMembers = quorumEvent.getCurrentMembers();
-                    assertEquals(2, currentMembers.size());
                     assertEquals(3, quorumEvent.getThreshold());
+                    assertTrue(currentMembers.size() < quorumEvent.getThreshold());
                     belowLatch.countDown();
                 }
             }
@@ -249,7 +250,7 @@ public class CacheQuorumListenerTest extends HazelcastTestSupport {
             cache.put(generateKeyOwnedBy(instance1), 1);
             fail("Expected a QuorumException");
         } catch (QuorumException expected) {
-            EmptyStatement.ignore(expected);
+            ignore(expected);
         }
 
         assertOpenEventually(belowLatch, 15);

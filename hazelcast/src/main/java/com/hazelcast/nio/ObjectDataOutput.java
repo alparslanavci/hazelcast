@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.nio;
 
 import com.hazelcast.nio.serialization.Data;
+import com.hazelcast.spi.serialization.SerializationService;
 
 import java.io.DataOutput;
 import java.io.IOException;
@@ -25,7 +26,7 @@ import java.nio.ByteOrder;
 /**
  * Provides serialization methods for arrays by extending DataOutput
  */
-public interface ObjectDataOutput extends DataOutput {
+public interface ObjectDataOutput extends DataOutput, VersionAware {
 
     /**
      * @param bytes byte array to be written
@@ -99,7 +100,18 @@ public interface ObjectDataOutput extends DataOutput {
     byte[] toByteArray();
 
     /**
+     * @param padding padding bytes at the beginning of the byte-array.
+     * @return copy of internal byte array
+     */
+    byte[] toByteArray(int padding);
+
+    /**
      * @return ByteOrder BIG_ENDIAN or LITTLE_ENDIAN
      */
     ByteOrder getByteOrder();
+
+    /**
+     * @return serialization service for this object
+     */
+    SerializationService getSerializationService();
 }

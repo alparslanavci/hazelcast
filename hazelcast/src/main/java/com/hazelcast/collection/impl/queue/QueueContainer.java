@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -47,25 +46,29 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-/**
- * This class contains methods be notable for the Queue.
- * such as pool,peek,clear..
- */
+import static com.hazelcast.collection.impl.collection.CollectionContainer.ID_PROMOTION_OFFSET;
+import static com.hazelcast.util.MapUtil.createHashMap;
+import static com.hazelcast.util.MapUtil.createLinkedHashMap;
+import static com.hazelcast.util.SetUtil.createHashSet;
 
 /**
  * The {@code QueueContainer} contains the actual queue and provides functionalities such as :
  * <ul>
- *     <li>queue functionalities</li>
- *     <li>transactional operation functionalities</li>
- *     <li>schedules queue destruction if it is configured to be destroyed once empty</li>
+ * <li>queue functionalities</li>
+ * <li>transactional operation functionalities</li>
+ * <li>schedules queue destruction if it is configured to be destroyed once empty</li>
  * </ul>
  */
+@SuppressWarnings("checkstyle:methodcount")
 public class QueueContainer implements IdentifiedDataSerializable {
-    private static final int ID_PROMOTION_OFFSET = 100000;
+
+    /**
+     * Contains item ID to queue item mappings for current transactions
+     */
     private final Map<Long, TxQueueItem> txMap = new HashMap<Long, TxQueueItem>();
     private final Map<Long, Data> dataMap = new HashMap<Long, Data>();
-    private final QueueWaitNotifyKey pollWaitNotifyKey;
-    private final QueueWaitNotifyKey offerWaitNotifyKey;
+    private QueueWaitNotifyKey pollWaitNotifyKey;
+    private QueueWaitNotifyKey offerWaitNotifyKey;
     private LinkedList<QueueItem> itemQueue;
     private Map<Long, QueueItem> backupMap;
     private QueueConfig config;
@@ -73,27 +76,34 @@ public class QueueContainer implements IdentifiedDataSerializable {
     private NodeEngine nodeEngine;
     private QueueService service;
     private ILogger logger;
+    /**
+     * The ID of the last item, used for generating unique IDs for queue items
+     */
     private long idGenerator;
     private String name;
 
     private long minAge = Long.MAX_VALUE;
-
     private long maxAge = Long.MIN_VALUE;
-
     private long totalAge;
-
     private long totalAgedCount;
-
     private boolean isEvictionScheduled;
+    // when QueueStore is configured & enabled, stores the last item ID that was bulk-loaded by QueueStore.loadAll
+    // to avoid reloading same items
+    private long lastIdLoaded;
+
+    /**
+     * The default no-args constructor is only meant for factory usage.
+     */
+    public QueueContainer() {
+    }
 
     public QueueContainer(String name) {
         this.name = name;
-        pollWaitNotifyKey = new QueueWaitNotifyKey(name, "poll");
-        offerWaitNotifyKey = new QueueWaitNotifyKey(name, "offer");
+        this.pollWaitNotifyKey = new QueueWaitNotifyKey(name, "poll");
+        this.offerWaitNotifyKey = new QueueWaitNotifyKey(name, "offer");
     }
 
-
-    public QueueContainer(String name, QueueConfig config, NodeEngine nodeEngine, QueueService service) throws Exception {
+    public QueueContainer(String name, QueueConfig config, NodeEngine nodeEngine, QueueService service) {
         this(name);
         setConfig(config, nodeEngine, service);
     }
@@ -121,8 +131,23 @@ public class QueueContainer implements IdentifiedDataSerializable {
         }
     }
 
-    //TX Methods
+    public QueueStoreWrapper getStore() {
+        return store;
+    }
 
+    public String getName() {
+        return name;
+    }
+
+    // TX Methods
+
+    /**
+     * Checks if there is a reserved item (within a transaction) with the given {@code itemId}.
+     *
+     * @param itemId the ID which is to be checked
+     * @return true if there is an item reserved with this ID
+     * @throws TransactionException if there is no reserved item with the ID
+     */
     public boolean txnCheckReserve(long itemId) {
         if (txMap.get(itemId) == null) {
             throw new TransactionException("No reserve for itemId: " + itemId);
@@ -140,7 +165,20 @@ public class QueueContainer implements IdentifiedDataSerializable {
         }
     }
 
-    //TX Poll
+    // TX Poll
+
+    /**
+     * Tries to obtain an item by removing the head of the
+     * queue or removing an item previously reserved by invoking
+     * {@link #txnOfferReserve(String)} with {@code reservedOfferId}.
+     * <p>
+     * If the queue item does not have data in-memory it will load the
+     * data from the queue store if the queue store is configured and enabled.
+     *
+     * @param reservedOfferId the ID of the reserved item to be returned if the queue is empty
+     * @param transactionId   the transaction ID for which this poll is invoked
+     * @return the head of the queue or a reserved item with the {@code reservedOfferId} if there is any
+     */
     public QueueItem txnPollReserve(long reservedOfferId, String transactionId) {
         QueueItem item = getItemQueue().peek();
         if (item == null) {
@@ -163,21 +201,43 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return item;
     }
 
+    /**
+     * Makes a reservation for a poll operation. Should be executed as
+     * a part of the prepare phase for a transactional queue poll
+     * on the partition backup replica.
+     * The ID of the item being polled is determined by the partition
+     * owner.
+     *
+     * @param itemId        the ID of the reserved item to be polled
+     * @param transactionId the transaction ID
+     * @see #txnPollReserve(long, String)
+     * @see com.hazelcast.collection.impl.txnqueue.operations.TxnReservePollOperation
+     */
     public void txnPollBackupReserve(long itemId, String transactionId) {
         QueueItem item = getBackupMap().remove(itemId);
-        if (item == null) {
-            logger.warning("Backup reserve failed, itemId: " + itemId + " is not found");
+        if (item != null) {
+            txMap.put(itemId, new TxQueueItem(item).setPollOperation(true).setTransactionId(transactionId));
             return;
         }
-        txMap.put(itemId, new TxQueueItem(item).setPollOperation(true).setTransactionId(transactionId));
+        if (txMap.remove(itemId) == null) {
+            logger.warning("Poll backup reserve failed, itemId: " + itemId + " is not found");
+        }
     }
 
     public Data txnCommitPoll(long itemId) {
-        final Data result = txnCommitPollBackup(itemId);
+        Data result = txnCommitPollBackup(itemId);
         scheduleEvictionIfEmpty();
         return result;
     }
 
+    /**
+     * Commits the effects of the {@link #txnPollReserve(long, String)}}. Also deletes the item data from the queue
+     * data store if it is configured and enabled.
+     *
+     * @param itemId the ID of the item which was polled inside a transaction
+     * @return the data of the polled item
+     * @throws HazelcastException if there was any exception while removing the item from the queue data store
+     */
     public Data txnCommitPollBackup(long itemId) {
         TxQueueItem item = txMap.remove(itemId);
         if (item == null) {
@@ -194,6 +254,18 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return item.getData();
     }
 
+    /**
+     * Rolls back the effects of the {@link #txnPollReserve(long, String)}.
+     * The {@code backup} parameter defines whether this item was stored
+     * on a backup queue or a primary queue.
+     * It will return the item to the queue or backup map if it wasn't
+     * offered as a part of the transaction.
+     * Cancels the queue eviction if one is scheduled.
+     *
+     * @param itemId the ID of the item which was polled in a transaction
+     * @param backup if this is the primary or the backup replica for this queue
+     * @return if there was any polled item with the {@code itemId} inside a transaction
+     */
     public boolean txnRollbackPoll(long itemId, boolean backup) {
         TxQueueItem item = txMap.remove(itemId);
         if (item == null) {
@@ -211,9 +283,9 @@ public class QueueContainer implements IdentifiedDataSerializable {
 
     @SuppressWarnings("unchecked")
     private void addTxItemOrdered(TxQueueItem txQueueItem) {
-        final ListIterator<QueueItem> iterator = ((List<QueueItem>) getItemQueue()).listIterator();
+        ListIterator<QueueItem> iterator = ((List<QueueItem>) getItemQueue()).listIterator();
         while (iterator.hasNext()) {
-            final QueueItem queueItem = iterator.next();
+            QueueItem queueItem = iterator.next();
             if (txQueueItem.itemId < queueItem.itemId) {
                 iterator.previous();
                 break;
@@ -222,25 +294,63 @@ public class QueueContainer implements IdentifiedDataSerializable {
         iterator.add(txQueueItem);
     }
 
-    //TX Offer
+    // TX Offer
+
+    /**
+     * Reserves an ID for a future queue item and associates it with the given {@code transactionId}.
+     * The item is not yet visible in the queue, it is just reserved for future insertion.
+     *
+     * @param transactionId the ID of the transaction offering this item
+     * @return the ID of the reserved item
+     */
     public long txnOfferReserve(String transactionId) {
-        TxQueueItem item = new TxQueueItem(this, nextId(), null).setTransactionId(transactionId).setPollOperation(false);
-        txMap.put(item.getItemId(), item);
-        return item.getItemId();
+        long itemId = nextId();
+        txnOfferReserveInternal(itemId, transactionId);
+        return itemId;
     }
 
+    /**
+     * Reserves an ID for a future queue item and associates it with the given {@code transactionId}.
+     * The item is not yet visible in the queue, it is just reserved for future insertion.
+     *
+     * @param transactionId the ID of the transaction offering this item
+     * @param itemId        the ID of the item being reserved
+     */
     public void txnOfferBackupReserve(long itemId, String transactionId) {
-        QueueItem item = new QueueItem(this, itemId, null);
-        Object o = txMap.put(itemId, new TxQueueItem(item).setPollOperation(false).setTransactionId(transactionId));
+        TxQueueItem o = txnOfferReserveInternal(itemId, transactionId);
         if (o != null) {
             logger.severe("txnOfferBackupReserve operation-> Item exists already at txMap for itemId: " + itemId);
         }
     }
 
+    /**
+     * Add a reservation for an item with {@code itemId} offered in transaction with {@code transactionId}
+     */
+    private TxQueueItem txnOfferReserveInternal(long itemId, String transactionId) {
+        TxQueueItem item = new TxQueueItem(this, itemId, null)
+                .setTransactionId(transactionId)
+                .setPollOperation(false);
+        return txMap.put(itemId, item);
+    }
+
+    /**
+     * Sets the data of a reserved item and commits the change so it can be
+     * visible outside a transaction.
+     * The commit means that the item is offered to the queue if
+     * {@code backup} is false or saved into a backup map if {@code backup} is {@code true}.
+     * This is because a node can hold backups for queues on other nodes.
+     * Cancels the queue eviction if one is scheduled.
+     *
+     * @param itemId the ID of the reserved item
+     * @param data   the data to be associated with the reserved item
+     * @param backup if the item is to be offered to the underlying queue or stored as a backup
+     * @return {@code true} if the commit succeeded
+     * @throws TransactionException if there is no reserved item with the {@code itemId}
+     */
     public boolean txnCommitOffer(long itemId, Data data, boolean backup) {
         QueueItem item = txMap.remove(itemId);
         if (item == null && !backup) {
-            throw new TransactionException("No reserve :" + itemId);
+            throw new TransactionException("No reserve: " + itemId);
         } else if (item == null) {
             item = new QueueItem(this, itemId, data);
         }
@@ -261,12 +371,25 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return true;
     }
 
+    /**
+     * Removes a reserved item with the given {@code itemId}. Also schedules the queue for destruction if it is empty or
+     * destroys it immediately if it is empty and {@link QueueConfig#getEmptyQueueTtl()} is 0.
+     *
+     * @param itemId the ID of the reserved item to be removed
+     * @return if an item was reserved with the given {@code itemId}
+     */
     public boolean txnRollbackOffer(long itemId) {
-        final boolean result = txnRollbackOfferBackup(itemId);
+        boolean result = txnRollbackOfferBackup(itemId);
         scheduleEvictionIfEmpty();
         return result;
     }
 
+    /**
+     * Removes a reserved item with the given {@code itemId}.
+     *
+     * @param itemId the ID of the reserved item to be removed
+     * @return if an item was reserved with the given {@code itemId}
+     */
     public boolean txnRollbackOfferBackup(long itemId) {
         QueueItem item = txMap.remove(itemId);
         if (item == null) {
@@ -276,6 +399,17 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return true;
     }
 
+    /**
+     * Retrieves, but does not remove, the head of the queue. If the queue is empty checks if there is a reserved item with
+     * the associated {@code offerId} and returns it.
+     * If the item was retrieved from the queue but does not contain any data and the queue store is enabled, this method will
+     * try load the data from the data store.
+     *
+     * @param offerId       the ID of the reserved item to be returned if the queue is empty
+     * @param transactionId currently ignored
+     * @return the head of the queue or a reserved item associated with the {@code offerId} if the queue is empty
+     * @throws HazelcastException if there is an exception while loading the data from the queue store
+     */
     public QueueItem txnPeek(long offerId, String transactionId) {
         QueueItem item = getItemQueue().peek();
         if (item == null) {
@@ -299,8 +433,7 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return item;
     }
 
-    //TX Methods Ends
-
+    // TX Methods Ends
 
     public long offer(Data data) {
         QueueItem item = new QueueItem(this, nextId(), null);
@@ -319,6 +452,14 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return item.getItemId();
     }
 
+    /**
+     * Offers the item to the backup map. If the memory limit
+     * has been achieved the item data will not be kept in-memory.
+     * Executed on the backup replica
+     *
+     * @param data   the item data
+     * @param itemId the item ID as determined by the primary replica
+     */
     public void offerBackup(Data data, long itemId) {
         QueueItem item = new QueueItem(this, itemId, null);
         if (!store.isEnabled() || store.getMemoryLimit() > getItemQueue().size()) {
@@ -336,10 +477,10 @@ public class QueueContainer implements IdentifiedDataSerializable {
      * @return map of item ID and items added
      */
     public Map<Long, Data> addAll(Collection<Data> dataList) {
-        final Map<Long, Data> map = new HashMap<Long, Data>(dataList.size());
-        final List<QueueItem> list = new ArrayList<QueueItem>(dataList.size());
+        Map<Long, Data> map = createHashMap(dataList.size());
+        List<QueueItem> list = new ArrayList<QueueItem>(dataList.size());
         for (Data data : dataList) {
-            final QueueItem item = new QueueItem(this, nextId(), null);
+            QueueItem item = new QueueItem(this, nextId(), null);
             if (!store.isEnabled() || store.getMemoryLimit() > getItemQueue().size()) {
                 item.setData(data);
             }
@@ -360,6 +501,14 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return map;
     }
 
+    /**
+     * Offers the items to the backup map in bulk. If the memory limit
+     * has been achieved the item data will not be kept in-memory.
+     * Executed on the backup replica
+     *
+     * @param dataMap the map from item ID to queue item
+     * @see #offerBackup(Data, long)
+     */
     public void addAllBackup(Map<Long, Data> dataMap) {
         for (Map.Entry<Long, Data> entry : dataMap.entrySet()) {
             QueueItem item = new QueueItem(this, entry.getKey(), null);
@@ -377,7 +526,7 @@ public class QueueContainer implements IdentifiedDataSerializable {
      * @return the first item in the queue
      */
     public QueueItem peek() {
-        final QueueItem item = getItemQueue().peek();
+        QueueItem item = getItemQueue().peek();
         if (item == null) {
             return null;
         }
@@ -398,7 +547,7 @@ public class QueueContainer implements IdentifiedDataSerializable {
      * @return the first item in the queue
      */
     public QueueItem poll() {
-        final QueueItem item = peek();
+        QueueItem item = peek();
         if (item == null) {
             return null;
         }
@@ -415,10 +564,17 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return item;
     }
 
+    /**
+     * Polls an item on the backup replica. The item ID is predetermined
+     * when executing the poll operation on the partition owner.
+     * Executed on the backup replica
+     *
+     * @param itemId the item ID as determined by the primary replica
+     */
     public void pollBackup(long itemId) {
         QueueItem item = getBackupMap().remove(itemId);
         if (item != null) {
-            //For Stats
+            // for stats
             age(item, Clock.currentTimeMillis());
         }
     }
@@ -436,7 +592,7 @@ public class QueueContainer implements IdentifiedDataSerializable {
         if (maxSizeParam < 0 || maxSizeParam > getItemQueue().size()) {
             maxSizeParam = getItemQueue().size();
         }
-        final LinkedHashMap<Long, Data> map = new LinkedHashMap<Long, Data>(maxSizeParam);
+        Map<Long, Data> map = createLinkedHashMap(maxSizeParam);
         mapDrainIterator(maxSizeParam, map);
         if (store.isEnabled() && maxSizeParam != 0) {
             try {
@@ -447,8 +603,8 @@ public class QueueContainer implements IdentifiedDataSerializable {
         }
         long current = Clock.currentTimeMillis();
         for (int i = 0; i < maxSizeParam; i++) {
-            final QueueItem item = getItemQueue().poll();
-            //For Stats
+            QueueItem item = getItemQueue().poll();
+            // for stats
             age(item, current);
         }
         if (maxSizeParam != 0) {
@@ -457,10 +613,10 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return map;
     }
 
-    public void mapDrainIterator(int maxSize, Map map) {
-        Iterator<QueueItem> iter = getItemQueue().iterator();
+    public void mapDrainIterator(int maxSize, Map<Long, Data> map) {
+        Iterator<QueueItem> iterator = getItemQueue().iterator();
         for (int i = 0; i < maxSize; i++) {
-            QueueItem item = iter.next();
+            QueueItem item = iterator.next();
             if (store.isEnabled() && item.getData() == null) {
                 try {
                     load(item);
@@ -487,16 +643,25 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return txMap.size();
     }
 
+    /**
+     * Returns the number of queue items contained on this
+     * backup replica. A transaction might temporarily reserve
+     * a poll operation by removing an item from this map.
+     * If the transaction is committed, the map will remain the same.
+     * If the transaction is aborted, the item is returned to the map.
+     *
+     * @return the number of items on this backup replica
+     */
     public int backupSize() {
         return getBackupMap().size();
     }
 
     public Map<Long, Data> clear() {
         long current = Clock.currentTimeMillis();
-        LinkedHashMap<Long, Data> map = new LinkedHashMap<Long, Data>(getItemQueue().size());
+        Map<Long, Data> map = createLinkedHashMap(getItemQueue().size());
         for (QueueItem item : getItemQueue()) {
             map.put(item.getItemId(), item.getData());
-            // For stats
+            // for stats
             age(item, current);
         }
         if (store.isEnabled() && !map.isEmpty()) {
@@ -521,9 +686,9 @@ public class QueueContainer implements IdentifiedDataSerializable {
      * This method does not trigger store load.
      */
     public long remove(Data data) {
-        Iterator<QueueItem> iter = getItemQueue().iterator();
-        while (iter.hasNext()) {
-            QueueItem item = iter.next();
+        Iterator<QueueItem> iterator = getItemQueue().iterator();
+        while (iterator.hasNext()) {
+            QueueItem item = iterator.next();
             if (data.equals(item.getData())) {
                 if (store.isEnabled()) {
                     try {
@@ -532,8 +697,8 @@ public class QueueContainer implements IdentifiedDataSerializable {
                         throw new HazelcastException(e);
                     }
                 }
-                iter.remove();
-                //For Stats
+                iterator.remove();
+                // for stats
                 age(item, Clock.currentTimeMillis());
                 scheduleEvictionIfEmpty();
                 return item.getItemId();
@@ -542,10 +707,15 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return -1;
     }
 
+    /**
+     * Removes a queue item from the backup map. This should
+     * be executed on the backup replica.
+     *
+     * @param itemId the queue item ID
+     */
     public void removeBackup(long itemId) {
         getBackupMap().remove(itemId);
     }
-
 
     /**
      * Checks if the queue contains all items in the dataSet. This method does not trigger store load.
@@ -575,7 +745,7 @@ public class QueueContainer implements IdentifiedDataSerializable {
      * @return the item data in the queue.
      */
     public List<Data> getAsDataList() {
-        final List<Data> dataList = new ArrayList<Data>(getItemQueue().size());
+        List<Data> dataList = new ArrayList<Data>(getItemQueue().size());
         for (QueueItem item : getItemQueue()) {
             if (store.isEnabled() && item.getData() == null) {
                 try {
@@ -594,15 +764,15 @@ public class QueueContainer implements IdentifiedDataSerializable {
      * the retain parameter is true, it will remove items which are not in the dataList (retaining the items which are in the
      * list). If the retain parameter is false, it will remove items which are in the dataList (retaining all other items which
      * are not in the list).
-     *
-     * Note : this method will trigger store load.
+     * <p>
+     * Note: this method will trigger store load.
      *
      * @param dataList the list of items which are to be retained in the queue or which are to be removed from the queue
-     * @param retain does the method retain the items in the list (true) or remove them from the queue (false)
-     * @return map of removed items by id
+     * @param retain   does the method retain the items in the list (true) or remove them from the queue (false)
+     * @return map of removed items by ID
      */
     public Map<Long, Data> compareAndRemove(Collection<Data> dataList, boolean retain) {
-        final LinkedHashMap<Long, Data> map = new LinkedHashMap<Long, Data>();
+        LinkedHashMap<Long, Data> map = new LinkedHashMap<Long, Data>();
         for (QueueItem item : getItemQueue()) {
             if (item.getData() == null && store.isEnabled()) {
                 try {
@@ -640,12 +810,12 @@ public class QueueContainer implements IdentifiedDataSerializable {
                 throw new HazelcastException(e);
             }
         }
-        final Iterator<QueueItem> iter = getItemQueue().iterator();
-        while (iter.hasNext()) {
-            final QueueItem item = iter.next();
+        Iterator<QueueItem> iterator = getItemQueue().iterator();
+        while (iterator.hasNext()) {
+            QueueItem item = iterator.next();
             if (map.containsKey(item.getItemId())) {
-                iter.remove();
-                //For Stats
+                iterator.remove();
+                // for stats
                 age(item, Clock.currentTimeMillis());
             }
         }
@@ -674,15 +844,21 @@ public class QueueContainer implements IdentifiedDataSerializable {
         if (bulkLoad == 1) {
             item.setData(store.load(item.getItemId()));
         } else if (bulkLoad > 1) {
-            final Iterator<QueueItem> iter = getItemQueue().iterator();
-            final HashSet<Long> keySet = new HashSet<Long>(bulkLoad);
+            long maxIdToLoad = -1;
+            Iterator<QueueItem> iterator = getItemQueue().iterator();
+            Set<Long> keySet = createHashSet(bulkLoad);
 
             keySet.add(item.getItemId());
-            while (keySet.size() < bulkLoad) {
-                keySet.add(iter.next().getItemId());
+            while (keySet.size() < bulkLoad && iterator.hasNext()) {
+                long itemId = iterator.next().getItemId();
+                if (itemId > lastIdLoaded) {
+                    keySet.add(itemId);
+                    maxIdToLoad = Math.max(itemId, maxIdToLoad);
+                }
             }
 
-            final Map<Long, Data> values = store.loadAll(keySet);
+            Map<Long, Data> values = store.loadAll(keySet);
+            lastIdLoaded = maxIdToLoad;
             dataMap.putAll(values);
             item.setData(getDataFromMap(item.getItemId()));
         }
@@ -707,6 +883,14 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return (getItemQueue().size() + delta) <= config.getMaxSize();
     }
 
+    /**
+     * Returns the item queue on the partition owner. This method
+     * will also move the items from the backup map if this
+     * member has been promoted from a backup replica to the
+     * partition owner and clear the backup map.
+     *
+     * @return the item queue
+     */
     public Deque<QueueItem> getItemQueue() {
         if (itemQueue == null) {
             itemQueue = new LinkedList<QueueItem>();
@@ -714,7 +898,7 @@ public class QueueContainer implements IdentifiedDataSerializable {
                 List<QueueItem> values = new ArrayList<QueueItem>(backupMap.values());
                 Collections.sort(values);
                 itemQueue.addAll(values);
-                final QueueItem lastItem = itemQueue.peekLast();
+                QueueItem lastItem = itemQueue.peekLast();
                 if (lastItem != null) {
                     setId(lastItem.itemId + ID_PROMOTION_OFFSET);
                 }
@@ -725,20 +909,30 @@ public class QueueContainer implements IdentifiedDataSerializable {
         return itemQueue;
     }
 
-    Map<Long, QueueItem> getBackupMap() {
+    /**
+     * Return the map containing queue items when this instance is
+     * a backup replica.
+     * The map contains both items that are parts of different
+     * transactions and items which have already been committed
+     * to the queue.
+     *
+     * @return backup replica map from item ID to queue item
+     */
+    public Map<Long, QueueItem> getBackupMap() {
         if (backupMap == null) {
-            backupMap = new HashMap<Long, QueueItem>();
             if (itemQueue != null) {
+                backupMap = createHashMap(itemQueue.size());
                 for (QueueItem item : itemQueue) {
                     backupMap.put(item.getItemId(), item);
                 }
                 itemQueue.clear();
                 itemQueue = null;
+            } else {
+                backupMap = new HashMap<Long, QueueItem>();
             }
         }
         return backupMap;
     }
-
 
     public Data getDataFromMap(long itemId) {
         return dataMap.remove(itemId);
@@ -749,15 +943,22 @@ public class QueueContainer implements IdentifiedDataSerializable {
         this.service = service;
         this.logger = nodeEngine.getLogger(QueueContainer.class);
         this.config = new QueueConfig(config);
-        // init queue store.
-        final QueueStoreConfig storeConfig = config.getQueueStoreConfig();
-        final SerializationService serializationService = nodeEngine.getSerializationService();
+        // init QueueStore
+        QueueStoreConfig storeConfig = config.getQueueStoreConfig();
+        SerializationService serializationService = nodeEngine.getSerializationService();
         ClassLoader classLoader = nodeEngine.getConfigClassLoader();
         this.store = QueueStoreWrapper.create(name, storeConfig, serializationService, classLoader);
     }
 
-    long nextId() {
+    /**
+     * Returns the next ID that can be used for uniquely identifying queue items
+     */
+    private long nextId() {
         return ++idGenerator;
+    }
+
+    public long getCurrentId() {
+        return idGenerator;
     }
 
     public QueueWaitNotifyKey getPollWaitNotifyKey() {
@@ -775,7 +976,7 @@ public class QueueContainer implements IdentifiedDataSerializable {
     private void age(QueueItem item, long currentTime) {
         long elapsed = currentTime - item.getCreationTime();
         if (elapsed <= 0) {
-            //elapsed time can not be a negative value, a system clock problem maybe. ignored
+            // elapsed time can not be a negative value, a system clock problem maybe (ignored)
             return;
         }
         totalAgedCount++;
@@ -797,14 +998,14 @@ public class QueueContainer implements IdentifiedDataSerializable {
      * {@link QueueConfig#getEmptyQueueTtl()} is 0. Upon scheduled execution, the queue will be checked if it is still empty.
      */
     private void scheduleEvictionIfEmpty() {
-        final int emptyQueueTtl = config.getEmptyQueueTtl();
+        int emptyQueueTtl = config.getEmptyQueueTtl();
         if (emptyQueueTtl < 0) {
             return;
         }
         if (getItemQueue().isEmpty() && txMap.isEmpty() && !isEvictionScheduled) {
             if (emptyQueueTtl == 0) {
                 nodeEngine.getProxyService().destroyDistributedObject(QueueService.SERVICE_NAME, name);
-            } else if (emptyQueueTtl > 0) {
+            } else {
                 service.scheduleEviction(name, TimeUnit.SECONDS.toMillis(emptyQueueTtl));
                 isEvictionScheduled = true;
             }
@@ -823,10 +1024,10 @@ public class QueueContainer implements IdentifiedDataSerializable {
     }
 
     public void rollbackTransaction(String transactionId) {
-        final Iterator<TxQueueItem> iterator = txMap.values().iterator();
+        Iterator<TxQueueItem> iterator = txMap.values().iterator();
 
         while (iterator.hasNext()) {
-            final TxQueueItem item = iterator.next();
+            TxQueueItem item = iterator.next();
             if (transactionId.equals(item.getTransactionId())) {
                 iterator.remove();
                 if (item.isPollOperation()) {
@@ -853,6 +1054,8 @@ public class QueueContainer implements IdentifiedDataSerializable {
     @Override
     public void readData(ObjectDataInput in) throws IOException {
         name = in.readUTF();
+        pollWaitNotifyKey = new QueueWaitNotifyKey(name, "poll");
+        offerWaitNotifyKey = new QueueWaitNotifyKey(name, "offer");
         int size = in.readInt();
         for (int j = 0; j < size; j++) {
             QueueItem item = in.readObject();

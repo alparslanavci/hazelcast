@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,10 @@
 
 package com.hazelcast.memory;
 
+import com.hazelcast.internal.metrics.Probe;
+
+import static com.hazelcast.internal.metrics.ProbeLevel.MANDATORY;
+
 /**
  * Memory statistics for the JVM which current HazelcastInstance belongs to.
  * <p/>
@@ -31,6 +35,7 @@ public interface MemoryStats {
      *
      * @return total physical memory in bytes.
      */
+    @Probe(level = MANDATORY)
     long getTotalPhysical();
 
     /**
@@ -42,15 +47,16 @@ public interface MemoryStats {
      *
      * @return free physical memory in bytes.
      */
+    @Probe(level = MANDATORY)
     long getFreePhysical();
 
     /**
      * Returns the maximum amount of memory that the JVM will attempt to use in bytes.
      *
      * @return the maximum amount of memory in bytes.
-     *
      * @see Runtime#maxMemory()
      */
+    @Probe(level = MANDATORY)
     long getMaxHeap();
 
     /**
@@ -58,28 +64,28 @@ public interface MemoryStats {
      * the Java virtual machine to use.
      *
      * @return the amount of committed memory in bytes.
-     *
      * @see Runtime#totalMemory()
      * @see java.lang.management.MemoryUsage#getCommitted()
      */
+    @Probe(level = MANDATORY)
     long getCommittedHeap();
 
     /**
      * Returns the amount of used memory in the JVM in bytes.
      *
      * @return the amount of used memory in bytes
-     *
      * @see java.lang.management.MemoryUsage#getUsed()
      */
+    @Probe(level = MANDATORY)
     long getUsedHeap();
 
     /**
      * Returns the amount of free memory in the JVM in bytes.
      *
      * @return the amount of free memory in bytes
-     *
      * @see Runtime#freeMemory()
      */
+    @Probe(level = MANDATORY)
     long getFreeHeap();
 
     /**
@@ -88,6 +94,7 @@ public interface MemoryStats {
      *
      * @return the maximum amount of native memory in bytes.
      */
+    @Probe(level = MANDATORY)
     long getMaxNative();
 
     /**
@@ -96,6 +103,7 @@ public interface MemoryStats {
      *
      * @return the amount of committed native memory in bytes.
      */
+    @Probe(level = MANDATORY)
     long getCommittedNative();
 
     /**
@@ -103,6 +111,7 @@ public interface MemoryStats {
      *
      * @return the amount of used native memory in bytes
      */
+    @Probe(level = MANDATORY)
     long getUsedNative();
 
     /**
@@ -110,21 +119,25 @@ public interface MemoryStats {
      *
      * @return the amount of free native memory in bytes
      */
+    @Probe(level = MANDATORY)
     long getFreeNative();
 
     /**
      * Returns the amount of native memory reserved for metadata. This memory
      * is separate and not accounted for by the {@code ...NativeMemory} statistics.
      */
+    @Probe(level = MANDATORY)
     long getMaxMetadata();
 
     /**
      * @return amount of used metadata memory
      */
+    @Probe(level = MANDATORY)
     long getUsedMetadata();
 
     /**
      * Returns the garbage collector statistics for the JVM
+     *
      * @return GC statistics
      */
     GarbageCollectorStats getGCStats();

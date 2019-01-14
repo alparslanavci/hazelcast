@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,16 @@
 
 package com.hazelcast.client.impl;
 
-import com.hazelcast.client.ClientEndpoint;
 import com.hazelcast.client.impl.client.ClientPrincipal;
 import com.hazelcast.core.ClientType;
 import com.hazelcast.core.HazelcastInstanceNotActiveException;
+import com.hazelcast.instance.BuildInfo;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.nio.Connection;
 import com.hazelcast.nio.tcp.TcpIpConnection;
 import com.hazelcast.security.Credentials;
 import com.hazelcast.spi.EventService;
+import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.transaction.TransactionContext;
 import com.hazelcast.transaction.TransactionException;
 import com.hazelcast.transaction.impl.xa.XATransactionContextImpl;
@@ -39,37 +40,47 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * The {@link com.hazelcast.client.ClientEndpoint} and {@link com.hazelcast.core.Client} implementation.
+ * The {@link com.hazelcast.client.impl.ClientEndpoint} and {@link com.hazelcast.core.Client} implementation.
  */
 public final class ClientEndpointImpl implements ClientEndpoint {
 
     private final ClientEngineImpl clientEngine;
-    private final Connection conn;
+    private final NodeEngineImpl nodeEngine;
+    private final Connection connection;
     private final ConcurrentMap<String, TransactionContext> transactionContextMap
             = new ConcurrentHashMap<String, TransactionContext>();
     private final ConcurrentHashMap<String, Callable> removeListenerActions = new ConcurrentHashMap<String, Callable>();
     private final SocketAddress socketAddress;
+    private final long creationTime;
 
     private LoginContext loginContext;
     private ClientPrincipal principal;
-    private boolean firstConnection;
+    private boolean ownerConnection;
     private Credentials credentials;
     private volatile boolean authenticated;
+    private int clientVersion;
+    private String clientVersionString;
+    private long authenticationCorrelationId;
+    private volatile String stats;
 
-    public ClientEndpointImpl(ClientEngineImpl clientEngine, Connection conn) {
+    public ClientEndpointImpl(ClientEngineImpl clientEngine, NodeEngineImpl nodeEngine, Connection connection) {
         this.clientEngine = clientEngine;
-        this.conn = conn;
-        if (conn instanceof TcpIpConnection) {
-            TcpIpConnection tcpIpConnection = (TcpIpConnection) conn;
-            socketAddress = tcpIpConnection.getSocketChannelWrapper().socket().getRemoteSocketAddress();
+        this.nodeEngine = nodeEngine;
+        this.connection = connection;
+        if (connection instanceof TcpIpConnection) {
+            TcpIpConnection tcpIpConnection = (TcpIpConnection) connection;
+            socketAddress = tcpIpConnection.getRemoteSocketAddress();
         } else {
             socketAddress = null;
         }
+        this.clientVersion = BuildInfo.UNKNOWN_HAZELCAST_VERSION;
+        this.clientVersionString = "Unknown";
+        this.creationTime = System.currentTimeMillis();
     }
 
     @Override
     public Connection getConnection() {
-        return conn;
+        return connection;
     }
 
     @Override
@@ -79,7 +90,7 @@ public final class ClientEndpointImpl implements ClientEndpoint {
 
     @Override
     public boolean isAlive() {
-        return conn.isAlive();
+        return connection.isAlive();
     }
 
     @Override
@@ -92,16 +103,19 @@ public final class ClientEndpointImpl implements ClientEndpoint {
         return loginContext != null ? loginContext.getSubject() : null;
     }
 
-    public boolean isFirstConnection() {
-        return firstConnection;
+    public boolean isOwnerConnection() {
+        return ownerConnection;
     }
 
     @Override
-    public void authenticated(ClientPrincipal principal, Credentials credentials, boolean firstConnection) {
+    public void authenticated(ClientPrincipal principal, Credentials credentials, boolean firstConnection,
+                              String clientVersion, long authCorrelationId) {
         this.principal = principal;
-        this.firstConnection = firstConnection;
+        this.ownerConnection = firstConnection;
         this.credentials = credentials;
         this.authenticated = true;
+        this.authenticationCorrelationId = authCorrelationId;
+        this.setClientVersion(clientVersion);
     }
 
     @Override
@@ -115,8 +129,25 @@ public final class ClientEndpointImpl implements ClientEndpoint {
         return authenticated;
     }
 
-    public ClientPrincipal getPrincipal() {
-        return principal;
+    @Override
+    public int getClientVersion() {
+        return clientVersion;
+    }
+
+    @Override
+    public void setClientVersion(String version) {
+        clientVersionString = version;
+        clientVersion = BuildInfo.calculateVersion(version);
+    }
+
+    @Override
+    public void setClientStatistics(String stats) {
+        this.stats = stats;
+    }
+
+    @Override
+    public String getClientStatistics() {
+        return stats;
     }
 
     @Override
@@ -127,7 +158,7 @@ public final class ClientEndpointImpl implements ClientEndpoint {
     @Override
     public ClientType getClientType() {
         ClientType type;
-        switch (conn.getType()) {
+        switch (connection.getType()) {
             case JAVA_CLIENT:
                 type = ClientType.JAVA;
                 break;
@@ -146,11 +177,14 @@ public final class ClientEndpointImpl implements ClientEndpoint {
             case NODEJS_CLIENT:
                 type = ClientType.NODEJS;
                 break;
+            case GO_CLIENT:
+                type = ClientType.GO;
+                break;
             case BINARY_CLIENT:
                 type = ClientType.OTHER;
                 break;
             default:
-                throw new IllegalArgumentException("Invalid connection type: " + conn.getType());
+                throw new IllegalArgumentException("Invalid connection type: " + connection.getType());
         }
         return type;
     }
@@ -214,6 +248,7 @@ public final class ClientEndpointImpl implements ClientEndpoint {
 
     public void destroy() throws LoginException {
         clearAllListeners();
+        nodeEngine.onClientDisconnected(getUuid());
 
         LoginContext lc = loginContext;
         if (lc != null) {
@@ -241,10 +276,17 @@ public final class ClientEndpointImpl implements ClientEndpoint {
     @Override
     public String toString() {
         return "ClientEndpoint{"
-                + "conn=" + conn
-                + ", principal='" + principal + '\''
-                + ", firstConnection=" + firstConnection
+                + "connection=" + connection
+                + ", principal='" + principal
+                + ", ownerConnection=" + ownerConnection
                 + ", authenticated=" + authenticated
+                + ", clientVersion=" + clientVersionString
+                + ", creationTime=" + creationTime
+                + ", latest statistics=" + stats
                 + '}';
+    }
+
+    public long getAuthenticationCorrelationId() {
+        return authenticationCorrelationId;
     }
 }

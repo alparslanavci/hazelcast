@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,11 +25,13 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import static com.hazelcast.util.CollectionUtil.isNotEmpty;
+import static com.hazelcast.util.MapUtil.createHashMap;
 import static java.lang.Thread.currentThread;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -50,7 +52,6 @@ class DefaultWriteBehindProcessor extends AbstractWriteBehindProcessor<DelayedEn
     private static final int RETRY_TIMES_OF_A_FAILED_STORE_OPERATION = 3;
 
     private static final int RETRY_STORE_AFTER_WAIT_SECONDS = 1;
-
 
     private final List<StoreListener> storeListeners;
 
@@ -140,7 +141,7 @@ class DefaultWriteBehindProcessor extends AbstractWriteBehindProcessor<DelayedEn
         if (size == 1 || !writeCoalescing) {
             return processEntriesOneByOne(delayedEntries, operationType);
         }
-        final DelayedEntry[] delayedEntriesArray = delayedEntries.toArray(new DelayedEntry[delayedEntries.size()]);
+        final DelayedEntry[] delayedEntriesArray = delayedEntries.toArray(new DelayedEntry[0]);
         final Map<Object, DelayedEntry> batchMap = prepareBatchMap(delayedEntriesArray);
 
         // if all batch is on same key, call single store.
@@ -175,8 +176,8 @@ class DefaultWriteBehindProcessor extends AbstractWriteBehindProcessor<DelayedEn
     }
 
     private Map prepareBatchMap(DelayedEntry[] delayedEntries) {
-        final Map<Object, DelayedEntry> batchMap = new HashMap<Object, DelayedEntry>();
         final int length = delayedEntries.length;
+        final Map<Object, DelayedEntry> batchMap = createHashMap(length);
         // process in reverse order since we do want to process
         // last store operation on a specific key
         for (int i = length - 1; i >= 0; i--) {
@@ -220,7 +221,7 @@ class DefaultWriteBehindProcessor extends AbstractWriteBehindProcessor<DelayedEn
     }
 
     private Map convertToObject(Map<Object, DelayedEntry> batchMap) {
-        final Map map = new HashMap();
+        final Map map = createHashMap(batchMap.size());
         for (DelayedEntry entry : batchMap.values()) {
             final Object key = toObject(entry.getKey());
             final Object value = toObject(entry.getValue());
@@ -243,14 +244,22 @@ class DefaultWriteBehindProcessor extends AbstractWriteBehindProcessor<DelayedEn
             public boolean run() throws Exception {
                 callBeforeStoreListeners(batchMap.values());
                 final Map map = convertToObject(batchMap);
-                final boolean result = operationType.processBatch(map, mapStore);
+                boolean result;
+                try {
+                    result = operationType.processBatch(map, mapStore);
+                } catch (Exception ex) {
+                    Iterator<Object> keys = batchMap.keySet().iterator();
+                    while (keys.hasNext()) {
+                        if (!map.containsKey(toObject(keys.next()))) {
+                            keys.remove();
+                        }
+                    }
+                    throw ex;
+                }
                 callAfterStoreListeners(batchMap.values());
                 return result;
             }
 
-            /**
-             * Call when store failed.
-             */
             @Override
             public List<DelayedEntry> failureList() {
                 failedDelayedEntries = new ArrayList<DelayedEntry>(batchMap.values().size());

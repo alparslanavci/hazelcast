@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.hazelcast.executor;
 
 import com.hazelcast.config.Config;
@@ -46,7 +47,7 @@ public class ExecutorServiceTestSupport extends HazelcastTestSupport {
         return createSingleNodeExecutorService(name, ExecutorConfig.DEFAULT_POOL_SIZE);
     }
 
-    public DurableExecutorService createSingleNodeDurableExecutorService(String name) {
+    protected DurableExecutorService createSingleNodeDurableExecutorService(String name) {
         return createSingleNodeDurableExecutorService(name, DurableExecutorConfig.DEFAULT_POOL_SIZE);
     }
 
@@ -60,31 +61,31 @@ public class ExecutorServiceTestSupport extends HazelcastTestSupport {
         return instance.getExecutorService(name);
     }
 
-    public DurableExecutorService createSingleNodeDurableExecutorService(String name, int poolSize) {
+    protected DurableExecutorService createSingleNodeDurableExecutorService(String name, int poolSize) {
         DurableExecutorConfig executorConfig = new DurableExecutorConfig(name).setPoolSize(poolSize);
         HazelcastInstance instance = createHazelcastInstance(new Config().addDurableExecutorConfig(executorConfig));
         return instance.getDurableExecutorService(name);
     }
 
-    @SuppressWarnings("StatementWithEmptyBody")
-    public int findNextKeyForMember(HazelcastInstance instance, Member localMember) {
+    protected int findNextKeyForMember(HazelcastInstance instance, Member localMember) {
         int key = 0;
-        while (!localMember.equals(instance.getPartitionService().getPartition(++key).getOwner())) {
+        while (!localMember.equals(instance.getPartitionService().getPartition(key).getOwner())) {
+            key++;
         }
         return key;
     }
 
-    public InternalExecutionService getExecutionService(HazelcastInstance instance) {
+    InternalExecutionService getExecutionService(HazelcastInstance instance) {
         return getNode(instance).getNodeEngine().getExecutionService();
     }
 
     public static class CountDownLatchAwaitingCallable implements Callable<String> {
 
-        public static String RESULT = "Success";
+        static final String RESULT = "Success";
 
         private final CountDownLatch latch;
 
-        public CountDownLatchAwaitingCallable(CountDownLatch latch) {
+        CountDownLatchAwaitingCallable(CountDownLatch latch) {
             this.latch = latch;
         }
 
@@ -111,7 +112,8 @@ public class ExecutorServiceTestSupport extends HazelcastTestSupport {
         @Override
         public void onResponse(T response) {
             if (!result.compareAndSet(null, response)) {
-                System.out.println("New response received after result is set. Response: " + response + " Resuilt: " + result.get());
+                System.out.println("New response received after result is set. Response: " + response
+                        + " Result: " + result.get());
             }
             latch.countDown();
         }
@@ -119,7 +121,7 @@ public class ExecutorServiceTestSupport extends HazelcastTestSupport {
         @Override
         public void onFailure(Throwable t) {
             if (!result.compareAndSet(null, t)) {
-                System.out.println("Failure received after result is set. Failure: " + t + " Resuilt: " + result.get());
+                System.out.println("Failure received after result is set. Failure: " + t + " Result: " + result.get());
             }
             latch.countDown();
         }
@@ -135,7 +137,7 @@ public class ExecutorServiceTestSupport extends HazelcastTestSupport {
 
     public static class BasicTestCallable implements Callable<String>, Serializable, PartitionAware {
 
-        public static String RESULT = "Task completed";
+        public static final String RESULT = "Task completed";
 
         @Override
         public String call() {
@@ -293,14 +295,16 @@ public class ExecutorServiceTestSupport extends HazelcastTestSupport {
 
         private final CountDownLatch latch;
 
-        public ResponseCountingMultiExecutionCallback(int count) {
+        ResponseCountingMultiExecutionCallback(int count) {
             this.latch = new CountDownLatch(count);
         }
 
+        @Override
         public void onResponse(Member member, Object value) {
             count.incrementAndGet();
         }
 
+        @Override
         public void onComplete(Map<Member, Object> values) {
             latch.countDown();
         }
@@ -348,7 +352,7 @@ public class ExecutorServiceTestSupport extends HazelcastTestSupport {
 
         private final String name;
 
-        private HazelcastInstance instance;
+        private transient HazelcastInstance instance;
 
         public IncrementAtomicLongRunnable(String name) {
             this.name = name;

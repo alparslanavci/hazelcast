@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,19 +19,23 @@ package com.hazelcast.collection.impl.queue;
 import com.hazelcast.config.QueueStoreConfig;
 import com.hazelcast.core.QueueStore;
 import com.hazelcast.core.QueueStoreFactory;
+import com.hazelcast.internal.diagnostics.Diagnostics;
+import com.hazelcast.internal.diagnostics.StoreLatencyPlugin;
 import com.hazelcast.internal.serialization.impl.HeapData;
 import com.hazelcast.nio.ClassLoaderUtil;
 import com.hazelcast.nio.serialization.Data;
+import com.hazelcast.spi.NodeEngine;
+import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.serialization.SerializationService;
-import com.hazelcast.util.EmptyStatement;
 
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
+import static com.hazelcast.util.EmptyStatement.ignore;
+import static com.hazelcast.util.MapUtil.createHashMap;
 import static com.hazelcast.util.Preconditions.checkNotNull;
 
 /**
@@ -48,6 +52,7 @@ public final class QueueStoreWrapper implements QueueStore<Data> {
     private static final String STORE_MEMORY_LIMIT = "memory-limit";
 
     private static final String STORE_BULK_LOAD = "bulk-load";
+    private final String name;
 
     private int memoryLimit = DEFAULT_MEMORY_LIMIT;
 
@@ -61,7 +66,8 @@ public final class QueueStoreWrapper implements QueueStore<Data> {
 
     private SerializationService serializationService;
 
-    private QueueStoreWrapper() {
+    private QueueStoreWrapper(String name) {
+        this.name = name;
     }
 
     /**
@@ -77,7 +83,7 @@ public final class QueueStoreWrapper implements QueueStore<Data> {
         checkNotNull(name, "name should not be null");
         checkNotNull(serializationService, "serializationService should not be null");
 
-        final QueueStoreWrapper storeWrapper = new QueueStoreWrapper();
+        final QueueStoreWrapper storeWrapper = new QueueStoreWrapper(name);
         storeWrapper.setSerializationService(serializationService);
         if (storeConfig == null || !storeConfig.isEnabled()) {
             return storeWrapper;
@@ -115,10 +121,9 @@ public final class QueueStoreWrapper implements QueueStore<Data> {
         try {
             store = ClassLoaderUtil.newInstance(classLoader, storeConfig.getClassName());
         } catch (Exception ignored) {
-            EmptyStatement.ignore(ignored);
+            ignore(ignored);
         }
         return store;
-
     }
 
     private static QueueStore getQueueStoreFactory(String name, QueueStoreConfig storeConfig, ClassLoader classLoader) {
@@ -128,13 +133,22 @@ public final class QueueStoreWrapper implements QueueStore<Data> {
         QueueStoreFactory factory = storeConfig.getFactoryImplementation();
         if (factory == null) {
             try {
-                factory = ClassLoaderUtil.newInstance(classLoader,
-                        storeConfig.getFactoryClassName());
+                factory = ClassLoaderUtil.newInstance(classLoader, storeConfig.getFactoryClassName());
             } catch (Exception ignored) {
-                EmptyStatement.ignore(ignored);
+                ignore(ignored);
             }
         }
         return factory == null ? null : factory.newQueueStore(name, storeConfig.getProperties());
+    }
+
+    void instrument(NodeEngine nodeEngine) {
+        Diagnostics diagnostics = ((NodeEngineImpl) nodeEngine).getDiagnostics();
+        StoreLatencyPlugin storeLatencyPlugin = diagnostics.getPlugin(StoreLatencyPlugin.class);
+        if (!enabled || storeLatencyPlugin == null) {
+            return;
+        }
+
+        this.store = new LatencyTrackingQueueStore(store, storeLatencyPlugin, name);
     }
 
     @Override
@@ -158,7 +172,7 @@ public final class QueueStoreWrapper implements QueueStore<Data> {
             return;
         }
 
-        final Map<Long, Object> objectMap = new HashMap<Long, Object>(map.size());
+        final Map<Long, Object> objectMap = createHashMap(map.size());
         if (binary) {
             // WARNING: we can't pass original Data to the user
             // TODO: @mm - is there really an advantage of using binary storeAll?
@@ -214,7 +228,7 @@ public final class QueueStoreWrapper implements QueueStore<Data> {
         if (map == null) {
             return Collections.emptyMap();
         }
-        final Map<Long, Data> dataMap = new HashMap<Long, Data>(map.size());
+        final Map<Long, Data> dataMap = createHashMap(map.size());
         if (binary) {
             for (Map.Entry<Long, ?> entry : map.entrySet()) {
                 byte[] dataBuffer = (byte[]) entry.getValue();

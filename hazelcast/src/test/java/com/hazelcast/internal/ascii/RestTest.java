@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,293 +16,295 @@
 
 package com.hazelcast.internal.ascii;
 
-import com.hazelcast.cluster.ClusterState;
 import com.hazelcast.config.Config;
-import com.hazelcast.config.EntryListenerConfig;
-import com.hazelcast.config.MapConfig;
-import com.hazelcast.config.XmlConfigBuilder;
-import com.hazelcast.core.EntryAdapter;
-import com.hazelcast.core.EntryEvent;
+import com.hazelcast.config.JoinConfig;
+import com.hazelcast.config.PermissionConfig;
+import com.hazelcast.config.WanReplicationConfig;
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.core.IMap;
 import com.hazelcast.core.IQueue;
-import com.hazelcast.core.LifecycleEvent;
-import com.hazelcast.core.LifecycleListener;
-import com.hazelcast.instance.BuildInfoProvider;
+import com.hazelcast.internal.management.dto.WanReplicationConfigDTO;
+import com.hazelcast.internal.management.request.UpdatePermissionConfigRequest;
 import com.hazelcast.spi.properties.GroupProperty;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.SlowTest;
 import org.junit.After;
-import org.junit.Assert;
+import org.junit.AfterClass;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
 import java.io.IOException;
-import java.net.ConnectException;
-import java.net.HttpURLConnection;
-import java.net.SocketException;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
+import static java.net.HttpURLConnection.HTTP_OK;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * User: sancar
- * Date: 3/11/13
- * Time: 3:33 PM
+ * This test is intentionally not in the {@link com.hazelcast.test.annotation.ParallelTest} category,
+ * since it starts real HazelcastInstances which have REST enabled.
  */
 @RunWith(HazelcastSerialClassRunner.class)
 @Category(SlowTest.class)
 public class RestTest extends HazelcastTestSupport {
 
-    final static Config config = new XmlConfigBuilder().build();
+    private static final AtomicInteger PORT = new AtomicInteger(5701);
 
-    @Before
-    public void setup() throws IOException {
-        config.setProperty(GroupProperty.REST_ENABLED.getName(), "true");
-    }
+    private HazelcastInstance instance;
+    private HazelcastInstance remoteInstance;
+    private HTTPCommunicator communicator;
+    private Config config = new Config();
 
-    @After
-    public void tearDown() throws IOException {
+    @BeforeClass
+    public static void beforeClass() {
         Hazelcast.shutdownAll();
     }
 
+    @AfterClass
+    public static void afterClass() {
+        Hazelcast.shutdownAll();
+    }
+
+    @Before
+    public void setup() {
+        config.getGroupConfig().setName(randomString());
+        config.setProperty(GroupProperty.REST_ENABLED.getName(), "true");
+
+        int firstPort = PORT.getAndIncrement();
+        int secondPort = PORT.getAndIncrement();
+
+        // we start pairs of HazelcastInstances which form a cluster to have remote invocations for all operations
+        JoinConfig join = config.getNetworkConfig().getJoin();
+        join.getMulticastConfig()
+                .setEnabled(false);
+        join.getTcpIpConfig()
+                .setEnabled(true)
+                .addMember("127.0.0.1:" + firstPort)
+                .addMember("127.0.0.1:" + secondPort);
+
+        config.getNetworkConfig().setPort(firstPort);
+        instance = Hazelcast.newHazelcastInstance(config);
+
+        config.getNetworkConfig().setPort(secondPort);
+        remoteInstance = Hazelcast.newHazelcastInstance(config);
+
+        communicator = new HTTPCommunicator(instance);
+    }
+
+    @After
+    public void tearDown() {
+        instance.getLifecycleService().terminate();
+        remoteInstance.getLifecycleService().terminate();
+    }
+
     @Test
-    public void testTtl_issue1783() throws IOException, InterruptedException {
-        String name = "map";
+    public void testMapPutGet() throws Exception {
+        testMapPutGet0();
+    }
 
-        final CountDownLatch latch = new CountDownLatch(1);
-        final MapConfig mapConfig = config.getMapConfig(name);
-        mapConfig.setTimeToLiveSeconds(3);
-        mapConfig.addEntryListenerConfig(new EntryListenerConfig()
-                .setImplementation(new EntryAdapter() {
-                    @Override
-                    public void entryEvicted(EntryEvent event) {
-                        latch.countDown();
-                    }
-                }));
+    @Test
+    public void testMapPutGet_chunked() throws Exception {
+        communicator.enableChunkedStreaming();
+        testMapPutGet0();
+    }
 
-        final HazelcastInstance instance = Hazelcast.newHazelcastInstance(config);
-        final HTTPCommunicator communicator = new HTTPCommunicator(instance);
+    private void testMapPutGet0() throws Exception {
+        String name = randomMapName();
 
-        communicator.put(name, "key", "value");
-        String value = communicator.get(name, "key");
+        String key = "key";
+        String value = "value";
 
-        assertNotNull(value);
-        assertEquals("value", value);
+        assertEquals(HTTP_OK, communicator.mapPut(name, key, value));
+        assertEquals(value, communicator.mapGet(name, key));
+        assertTrue(instance.getMap(name).containsKey(key));
+    }
 
-        assertTrue(latch.await(30, TimeUnit.SECONDS));
-        value = communicator.get(name, "key");
+    @Test
+    public void testMapPutDelete() throws Exception {
+        String name = randomMapName();
+
+        String key = "key";
+        String value = "value";
+
+        assertEquals(HTTP_OK, communicator.mapPut(name, key, value));
+        assertEquals(HTTP_OK, communicator.mapDelete(name, key));
+        assertFalse(instance.getMap(name).containsKey(key));
+    }
+
+    @Test
+    public void testMapDeleteAll() throws Exception {
+        String name = randomMapName();
+
+        int count = 10;
+        for (int i = 0; i < count; i++) {
+            assertEquals(HTTP_OK, communicator.mapPut(name, "key" + i, "value"));
+        }
+
+        IMap<Object, Object> map = instance.getMap(name);
+        assertEquals(10, map.size());
+
+        assertEquals(HTTP_OK, communicator.mapDeleteAll(name));
+        assertTrue(map.isEmpty());
+    }
+
+    // issue #1783
+    @Test
+    public void testMapTtl() throws Exception {
+        String name = randomMapName();
+        config.getMapConfig(name)
+                .setTimeToLiveSeconds(2);
+
+        String key = "key";
+        communicator.mapPut(name, key, "value");
+
+        sleepAtLeastSeconds(3);
+
+        String value = communicator.mapGet(name, key);
         assertTrue(value.isEmpty());
     }
 
     @Test
-    public void testRestSimple() throws IOException {
-        final HazelcastInstance instance = Hazelcast.newHazelcastInstance(config);
-        final HTTPCommunicator communicator = new HTTPCommunicator(instance);
-        final String name = "testRestSimple";
-        for (int i = 0; i < 100; i++) {
-            assertEquals(HttpURLConnection.HTTP_OK, communicator.put(name, String.valueOf(i), String.valueOf(i * 10)));
-        }
+    public void testQueueOfferPoll() throws Exception {
+        String name = randomName();
 
-        for (int i = 0; i < 100; i++) {
-            String actual = communicator.get(name, String.valueOf(i));
-            assertEquals(String.valueOf(i * 10), actual);
-        }
+        String item = communicator.queuePoll(name, 1);
+        assertTrue(item.isEmpty());
 
-        communicator.deleteAll(name);
+        String value = "value";
+        assertEquals(HTTP_OK, communicator.queueOffer(name, value));
 
-        for (int i = 0; i < 100; i++) {
-            String actual = communicator.get(name, String.valueOf(i));
-            assertEquals("", actual);
-        }
+        IQueue<Object> queue = instance.getQueue(name);
+        assertEquals(1, queue.size());
 
-        for (int i = 0; i < 100; i++) {
-            assertEquals(HttpURLConnection.HTTP_OK, communicator.put(name, String.valueOf(i), String.valueOf(i * 10)));
-        }
-
-        for (int i = 0; i < 100; i++) {
-            assertEquals(String.valueOf(i * 10), communicator.get(name, String.valueOf(i)));
-        }
-
-        for (int i = 0; i < 100; i++) {
-            assertEquals(HttpURLConnection.HTTP_OK, communicator.delete(name, String.valueOf(i)));
-        }
-
-        for (int i = 0; i < 100; i++) {
-            assertEquals("", communicator.get(name, String.valueOf(i)));
-        }
-
-        for (int i = 0; i < 100; i++) {
-            assertEquals(HttpURLConnection.HTTP_OK, communicator.offer(name, String.valueOf(i)));
-        }
-
-        for (int i = 0; i < 100; i++) {
-            assertEquals(String.valueOf(i), communicator.poll(name, 2));
-        }
+        assertEquals(value, communicator.queuePoll(name, 10));
+        assertTrue(queue.isEmpty());
     }
 
     @Test
-    public void testQueueSizeEmpty() throws IOException {
-        final HazelcastInstance instance = Hazelcast.newHazelcastInstance(config);
-        final HTTPCommunicator communicator = new HTTPCommunicator(instance);
-        final String name = "testQueueSizeEmpty";
-
-        IQueue queue = instance.getQueue(name);
-        Assert.assertEquals(queue.size(), communicator.size(name));
-    }
-
-    @Test
-    public void testQueueSizeNonEmpty() throws IOException {
-        final HazelcastInstance instance = Hazelcast.newHazelcastInstance(config);
-        final HTTPCommunicator communicator = new HTTPCommunicator(instance);
-        final String name = "testQueueSizeNotEmpty";
-        final int num_items = 100;
-
-        IQueue queue = instance.getQueue(name);
-
-        for (int i = 0; i < num_items; i++) {
+    public void testQueueSize() throws Exception {
+        String name = randomName();
+        IQueue<Integer> queue = instance.getQueue(name);
+        for (int i = 0; i < 10; i++) {
             queue.add(i);
         }
 
-        Assert.assertEquals(queue.size(), communicator.size(name));
+        assertEquals(queue.size(), communicator.queueSize(name));
     }
 
     @Test
-    public void testDisabledRest() throws IOException {
-        Config config = new XmlConfigBuilder().build(); //REST should be disabled by default
-        HazelcastInstance instance = Hazelcast.newHazelcastInstance(config);
-        HTTPCommunicator communicator = new HTTPCommunicator(instance);
-        String mapName = "testMap";
-
-        try {
-            communicator.put("testMap", "1", "1");
-        } catch (SocketException ignore) {
-        }
-
-        assertEquals(0, instance.getMap(mapName).size());
-    }
-
-    @Test
-    public void testClusterShutdown() throws IOException {
-        final HazelcastInstance instance1 = Hazelcast.newHazelcastInstance(config);
-        final HazelcastInstance instance2 = Hazelcast.newHazelcastInstance(config);
-        final HazelcastInstance instance3 = Hazelcast.newHazelcastInstance(config);
-        HTTPCommunicator communicator = new HTTPCommunicator(instance1);
-
-        assertEquals(HttpURLConnection.HTTP_OK, communicator.shutdownCluster("dev", "dev-pass"));
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run()
-                    throws Exception {
-                assertFalse(instance1.getLifecycleService().isRunning());
-                assertFalse(instance2.getLifecycleService().isRunning());
-                assertFalse(instance3.getLifecycleService().isRunning());
-            }
-        });
-    }
-
-    @Test
-    public void testGetClusterState() throws IOException {
-        final HazelcastInstance instance1 = Hazelcast.newHazelcastInstance(config);
-        final HazelcastInstance instance2 = Hazelcast.newHazelcastInstance(config);
-
-        HTTPCommunicator communicator1 = new HTTPCommunicator(instance1);
-        HTTPCommunicator communicator2 = new HTTPCommunicator(instance2);
-
-        instance1.getCluster().changeClusterState(ClusterState.FROZEN);
-        assertEquals("{\"status\":\"success\",\"state\":\"frozen\"}",
-                communicator1.getClusterState("dev", "dev-pass"));
-
-        instance1.getCluster().changeClusterState(ClusterState.PASSIVE);
-        assertEquals("{\"status\":\"success\",\"state\":\"passive\"}",
-                communicator2.getClusterState("dev", "dev-pass"));
-
-    }
-
-    @Test
-    public void testChangeClusterState() throws IOException {
-        final HazelcastInstance instance1 = Hazelcast.newHazelcastInstance(config);
-        final HazelcastInstance instance2 = Hazelcast.newHazelcastInstance(config);
-        HTTPCommunicator communicator = new HTTPCommunicator(instance1);
-
-        assertEquals(HttpURLConnection.HTTP_OK, communicator.changeClusterState("dev", "dev-pass", "frozen"));
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run()
-                    throws Exception {
-                assertEquals(ClusterState.FROZEN, instance1.getCluster().getClusterState());
-                assertEquals(ClusterState.FROZEN, instance2.getCluster().getClusterState());
-            }
-        });
-    }
-
-    @Test
-    public void testListNodes() throws IOException {
-        final HazelcastInstance instance1 = Hazelcast.newHazelcastInstance(config);
-        HTTPCommunicator communicator = new HTTPCommunicator(instance1);
-        HazelcastTestSupport.waitInstanceForSafeState(instance1);
-        String result = String.format("{\"status\":\"success\" \"response\":\"[%s]\n%s\n%s\"}",
-                instance1.getCluster().getLocalMember().toString(),
-                BuildInfoProvider.getBuildInfo().getVersion(),
-                System.getProperty("java.version"));
-        assertEquals(result, communicator.listClusterNodes("dev", "dev-pass"));
-    }
-
-    @Test
-    public void testListNodesWithWrongCredentials() throws IOException {
-        final HazelcastInstance instance1 = Hazelcast.newHazelcastInstance(config);
-        HTTPCommunicator communicator = new HTTPCommunicator(instance1);
-        HazelcastTestSupport.waitInstanceForSafeState(instance1);
-        assertEquals("{\"status\":\"forbidden\" \"response\":\"null\"}", communicator.listClusterNodes("dev1", "dev-pass"));
-    }
-
-    @Test
-    public void testShutdownNode() throws IOException {
-        final HazelcastInstance instance = Hazelcast.newHazelcastInstance(config);
-        HTTPCommunicator communicator = new HTTPCommunicator(instance);
-
-        final CountDownLatch shutdownLatch = new CountDownLatch(1);
-        instance.getLifecycleService().addLifecycleListener(new LifecycleListener() {
-            @Override
-            public void stateChanged(LifecycleEvent event) {
-                if (event.getState() == LifecycleEvent.LifecycleState.SHUTDOWN) {
-                    shutdownLatch.countDown();
-                }
-            }
-        });
-
-        try {
-            assertEquals("{\"status\":\"success\"}", communicator.shutdownMember("dev", "dev-pass"));
-        } catch (ConnectException ignored) {
-            // If node shuts down before response is received,
-            // `java.net.ConnectException: Connection refused` is expected.
-        }
-
-        assertOpenEventually(shutdownLatch);
-        assertFalse(instance.getLifecycleService().isRunning());
-    }
-
-    @Test
-    public void testShutdownNodeWithWrongCredentials() throws IOException {
-        final HazelcastInstance instance = Hazelcast.newHazelcastInstance(config);
-        HTTPCommunicator communicator = new HTTPCommunicator(instance);
-
-        assertEquals("{\"status\":\"forbidden\"}", communicator.shutdownMember("dev1", "dev-pass"));
-    }
-
-    @Test
-    public void syncMapOverWAN() throws IOException {
-        final HazelcastInstance instance = Hazelcast.newHazelcastInstance(config);
-        HTTPCommunicator communicator = new HTTPCommunicator(instance);
+    public void syncMapOverWAN() throws Exception {
         String result = communicator.syncMapOverWAN("atob", "b", "default");
         assertEquals("{\"status\":\"fail\",\"message\":\"WAN sync for map is not supported.\"}", result);
+    }
+
+    @Test
+    public void syncAllMapsOverWAN() throws Exception {
+        String result = communicator.syncMapsOverWAN("atob", "b");
+        assertEquals("{\"status\":\"fail\",\"message\":\"WAN sync is not supported.\"}", result);
+    }
+
+    @Test
+    public void wanClearQueues() throws Exception {
+        String result = communicator.wanClearQueues("atob", "b");
+        assertEquals("{\"status\":\"fail\",\"message\":\"Clearing WAN replication queues is not supported.\"}", result);
+    }
+
+    @Test
+    public void addWanConfig() throws Exception {
+        WanReplicationConfig wanConfig = new WanReplicationConfig();
+        wanConfig.setName("test");
+        WanReplicationConfigDTO dto = new WanReplicationConfigDTO(wanConfig);
+        String result = communicator.addWanConfig(dto.toJson().toString());
+        assertEquals("{\"status\":\"fail\",\"message\":\"java.lang.UnsupportedOperationException: Adding new WAN config is not supported.\"}", result);
+    }
+
+    @Test
+    public void updatePermissions() throws Exception {
+        Set<PermissionConfig> permissionConfigs = new HashSet<PermissionConfig>();
+        permissionConfigs.add(new PermissionConfig(PermissionConfig.PermissionType.MAP, "test", "*"));
+        UpdatePermissionConfigRequest request = new UpdatePermissionConfigRequest(permissionConfigs);
+        String result = communicator.updatePermissions(config.getGroupConfig().getName(),
+                config.getGroupConfig().getPassword(), request.toJson().toString());
+        assertEquals("{\"status\":\"forbidden\"}", result);
+    }
+
+    @Test
+    public void testMap_PutGet_withLargeValue() throws IOException {
+        testMap_PutGet_withLargeValue0();
+    }
+
+    @Test
+    public void testMap_PutGet_withLargeValue_chunked() throws IOException {
+        communicator.enableChunkedStreaming();
+        testMap_PutGet_withLargeValue0();
+    }
+
+    private void testMap_PutGet_withLargeValue0() throws IOException {
+        String mapName = randomMapName();
+        String key = "key";
+        int capacity = 10000;
+        StringBuilder value = new StringBuilder(capacity);
+        while (value.length() < capacity) {
+            value.append(randomString());
+        }
+
+        String valueStr = value.toString();
+        int response = communicator.mapPut(mapName, key, valueStr);
+        assertEquals(HTTP_OK, response);
+
+        String actual = communicator.mapGet(mapName, key);
+        assertEquals(valueStr, actual);
+    }
+
+    @Test
+    public void testMap_PutGet_withLargeKey() throws IOException {
+        testMap_PutGet_withLargeKey0();
+    }
+
+    @Test
+    public void testMap_PutGet_withLargeKey_chunked() throws IOException {
+        communicator.enableChunkedStreaming();
+        testMap_PutGet_withLargeKey0();
+    }
+
+    private void testMap_PutGet_withLargeKey0() throws IOException {
+        String mapName = randomMapName();
+        int capacity = 5000;
+        StringBuilder key = new StringBuilder(capacity);
+        while (key.length() < capacity) {
+            key.append(randomString());
+        }
+
+        String value = "value";
+        int response = communicator.mapPut(mapName, key.toString(), value);
+        assertEquals(HTTP_OK, response);
+        assertEquals(value, communicator.mapGet(mapName, key.toString()));
+    }
+
+    @Test
+    public void testMap_HeadRequest() throws IOException {
+        int response = communicator.headRequestToMapURI().responseCode;
+        assertEquals(HTTP_OK, response);
+    }
+
+    @Test
+    public void testQueue_HeadRequest() throws IOException {
+        int response = communicator.headRequestToQueueURI().responseCode;
+        assertEquals(HTTP_OK, response);
+    }
+
+    @Test
+    public void testUndefined_HeadRequest() throws IOException {
+        int response = communicator.headRequestToUndefinedURI().responseCode;
+        assertEquals(HTTP_BAD_REQUEST, response);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,8 @@ package com.hazelcast.spi.impl;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.Data;
-import com.hazelcast.nio.serialization.DataSerializable;
+import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.spi.serialization.SerializationService;
-import com.hazelcast.util.EmptyStatement;
 import com.hazelcast.util.UnmodifiableListIterator;
 
 import java.io.IOException;
@@ -32,7 +31,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
 
-public class UnmodifiableLazyList<E> extends AbstractList<E> implements DataSerializable {
+import static com.hazelcast.util.EmptyStatement.ignore;
+
+public class UnmodifiableLazyList<E> extends AbstractList<E> implements IdentifiedDataSerializable {
 
     private final transient SerializationService serializationService;
     private List list;
@@ -79,7 +80,7 @@ public class UnmodifiableLazyList<E> extends AbstractList<E> implements DataSeri
             try {
                 list.set(index, item);
             } catch (Exception e) {
-                EmptyStatement.ignore(e);
+                ignore(e);
             }
             return item;
         }
@@ -167,12 +168,22 @@ public class UnmodifiableLazyList<E> extends AbstractList<E> implements DataSeri
                 try {
                     listIterator.set(item);
                 } catch (Exception e) {
-                    EmptyStatement.ignore(e);
+                    ignore(e);
                 }
                 return item;
             }
             return (E) o;
         }
 
+    }
+
+    @Override
+    public int getFactoryId() {
+        return SpiDataSerializerHook.F_ID;
+    }
+
+    @Override
+    public int getId() {
+        return SpiDataSerializerHook.UNMODIFIABLE_LAZY_LIST;
     }
 }

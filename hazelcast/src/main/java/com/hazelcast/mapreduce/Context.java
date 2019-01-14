@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,6 @@
 
 package com.hazelcast.mapreduce;
 
-import com.hazelcast.spi.annotation.Beta;
-
 /**
  * The Context interface is used for emitting keys and values to the intermediate working space of
  * the MapReduce algorithm.
@@ -25,8 +23,11 @@ import com.hazelcast.spi.annotation.Beta;
  * @param <K> key type of the resulting keys
  * @param <V> value type of the resulting values
  * @since 3.2
+ * @deprecated MapReduce is deprecated and will be removed in 4.0.
+ * For map aggregations, you can use {@link com.hazelcast.aggregation.Aggregator} on IMap.
+ * For general data processing, it is superseded by <a href="http://jet.hazelcast.org">Hazelcast Jet</a>.
  */
-@Beta
+@Deprecated
 public interface Context<K, V> {
 
     /**

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.hazelcast.mapreduce.KeyValueSource;
 import com.hazelcast.mapreduce.impl.MapReduceService;
 import com.hazelcast.mapreduce.impl.operation.ProcessStatsUpdateOperation;
 import com.hazelcast.nio.Address;
+import com.hazelcast.nio.serialization.BinaryInterface;
 import com.hazelcast.spi.NodeEngine;
 
 import java.io.IOException;
@@ -35,6 +36,7 @@ import java.util.Map;
  * @param <K> type of the key
  * @param <V> type of the value
  */
+@BinaryInterface
 class KeyValueSourceFacade<K, V>
         extends KeyValueSource<K, V> {
 

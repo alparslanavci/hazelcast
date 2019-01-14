@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,9 @@ import com.hazelcast.cluster.ClusterState;
 import com.hazelcast.core.Cluster;
 import com.hazelcast.core.Member;
 import com.hazelcast.core.MembershipListener;
+import com.hazelcast.hotrestart.HotRestartService;
 import com.hazelcast.transaction.TransactionOptions;
+import com.hazelcast.version.Version;
 
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -75,6 +77,16 @@ public class ClientClusterProxy implements Cluster {
     }
 
     @Override
+    public Version getClusterVersion() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public HotRestartService getHotRestartService() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void changeClusterState(ClusterState newState, TransactionOptions transactionOptions) {
         throw new UnsupportedOperationException();
     }
@@ -86,6 +98,21 @@ public class ClientClusterProxy implements Cluster {
 
     @Override
     public void shutdown(TransactionOptions transactionOptions) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void changeClusterVersion(Version version) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void changeClusterVersion(Version version, TransactionOptions options) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void promoteLocalLiteMember() {
         throw new UnsupportedOperationException();
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -118,11 +118,13 @@ public class ClientTxnDisconnectionTest {
     }
 
     private void assertValidWaitingOperationCount(final int count) {
+
+        // Note: The wait duration here should be more than endpoint remove delay time
         assertTrueEventually(new AssertTask() {
             @Override
             public void run() throws Exception {
                 Assert.assertEquals(count, waitNotifyService.getTotalValidWaitingOperationCount());
             }
-        }, 10);
+        });
     }
 }

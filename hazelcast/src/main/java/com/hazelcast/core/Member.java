@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.core;
 
 import com.hazelcast.nio.Address;
 import com.hazelcast.nio.serialization.DataSerializable;
+import com.hazelcast.version.MemberVersion;
 
 import java.net.InetSocketAddress;
 import java.util.Map;
@@ -257,5 +258,16 @@ public interface Member extends DataSerializable, Endpoint {
      * @since 3.2
      */
     void removeAttribute(String key);
+
+    /**
+     * Returns the Hazelcast codebase version of this member; this may or may not be different from the version reported by
+     * {@link Cluster#getClusterVersion()}, for example when a node with a different codebase version is added to an
+     * existing cluster. See the documentation for {@link Cluster#getClusterVersion()} for a more thorough discussion
+     * of {@code Cluster} and {@code Member} / {@code Node} version.
+     *
+     * @return the {@link MemberVersion} of this member.
+     * @since 3.8
+     */
+    MemberVersion getVersion();
 
 }

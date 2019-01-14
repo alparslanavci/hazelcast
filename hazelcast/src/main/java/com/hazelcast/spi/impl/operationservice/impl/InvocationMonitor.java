@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.hazelcast.spi.impl.operationservice.impl;
 
 import com.hazelcast.core.Member;
 import com.hazelcast.core.MemberLeftException;
-import com.hazelcast.instance.HazelcastThreadGroup;
 import com.hazelcast.instance.MemberImpl;
 import com.hazelcast.internal.cluster.ClusterService;
 import com.hazelcast.internal.metrics.MetricsProvider;
@@ -29,17 +28,18 @@ import com.hazelcast.internal.util.counters.SwCounter;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.nio.Address;
 import com.hazelcast.nio.Packet;
-import com.hazelcast.spi.LiveOperations;
+import com.hazelcast.spi.CallsPerMember;
+import com.hazelcast.spi.CanCancelOperations;
 import com.hazelcast.spi.LiveOperationsTracker;
+import com.hazelcast.spi.OperationControl;
 import com.hazelcast.spi.impl.NodeEngineImpl;
-import com.hazelcast.spi.impl.PacketHandler;
 import com.hazelcast.spi.impl.operationexecutor.OperationHostileThread;
 import com.hazelcast.spi.impl.servicemanager.ServiceManager;
 import com.hazelcast.spi.properties.HazelcastProperties;
 import com.hazelcast.util.Clock;
+import com.hazelcast.util.function.Consumer;
 
-import java.util.Iterator;
-import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -52,11 +52,11 @@ import java.util.logging.Level;
 import static com.hazelcast.instance.OutOfMemoryErrorDispatcher.inspectOutOfMemoryError;
 import static com.hazelcast.internal.metrics.ProbeLevel.MANDATORY;
 import static com.hazelcast.internal.util.counters.SwCounter.newSwCounter;
-import static com.hazelcast.nio.Packet.FLAG_OP;
 import static com.hazelcast.nio.Packet.FLAG_OP_CONTROL;
 import static com.hazelcast.nio.Packet.FLAG_URGENT;
 import static com.hazelcast.spi.properties.GroupProperty.OPERATION_BACKUP_TIMEOUT_MILLIS;
 import static com.hazelcast.spi.properties.GroupProperty.OPERATION_CALL_TIMEOUT_MILLIS;
+import static com.hazelcast.util.ThreadUtil.createThreadName;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static java.util.logging.Level.FINE;
@@ -70,9 +70,8 @@ import static java.util.logging.Level.INFO;
  * alive. Also if no operations are running, it will still send a period packet to each member. This is a different system than
  * the regular heartbeats, but it has similar characteristics. The reason the packet is always send is for debugging purposes.
  */
-class InvocationMonitor implements PacketHandler, MetricsProvider {
+public class InvocationMonitor implements Consumer<Packet>, MetricsProvider {
 
-    private static final long ON_MEMBER_LEFT_DELAY_MILLIS = 1111;
     private static final int HEARTBEAT_CALL_TIMEOUT_RATIO = 4;
     private static final long MAX_DELAY_MILLIS = SECONDS.toMillis(10);
 
@@ -83,7 +82,7 @@ class InvocationMonitor implements PacketHandler, MetricsProvider {
     private final ILogger logger;
     private final ScheduledExecutorService scheduler;
     private final Address thisAddress;
-    private final ConcurrentMap<Address, AtomicLong> lastHeartbeatPerMember = new ConcurrentHashMap<Address, AtomicLong>();
+    private final ConcurrentMap<Address, AtomicLong> heartbeatPerMember = new ConcurrentHashMap<Address, AtomicLong>();
 
     @Probe(name = "backupTimeouts", level = MANDATORY)
     private final SwCounter backupTimeoutsCount = newSwCounter();
@@ -107,7 +106,6 @@ class InvocationMonitor implements PacketHandler, MetricsProvider {
     //todo: we need to get rid of the nodeEngine dependency
     InvocationMonitor(NodeEngineImpl nodeEngine,
                       Address thisAddress,
-                      HazelcastThreadGroup threadGroup,
                       HazelcastProperties properties,
                       InvocationRegistry invocationRegistry,
                       ILogger logger,
@@ -122,7 +120,17 @@ class InvocationMonitor implements PacketHandler, MetricsProvider {
         this.backupTimeoutMillis = backupTimeoutMillis(properties);
         this.invocationTimeoutMillis = invocationTimeoutMillis(properties);
         this.heartbeatBroadcastPeriodMillis = heartbeatBroadcastPeriodMillis(properties);
-        this.scheduler = newScheduler(threadGroup);
+        this.scheduler = newScheduler(nodeEngine.getHazelcastInstance().getName());
+    }
+
+    // Only accessed by diagnostics.
+    public ConcurrentMap<Address, AtomicLong> getHeartbeatPerMember() {
+        return heartbeatPerMember;
+    }
+
+    // Only accessed by diagnostics.
+    public long getHeartbeatBroadcastPeriodMillis() {
+        return heartbeatBroadcastPeriodMillis;
     }
 
     @Override
@@ -130,12 +138,12 @@ class InvocationMonitor implements PacketHandler, MetricsProvider {
         registry.scanAndRegister(this, "operation.invocations");
     }
 
-    private ScheduledExecutorService newScheduler(final HazelcastThreadGroup threadGroup) {
+    private static ScheduledExecutorService newScheduler(final String hzName) {
         // the scheduler is configured with a single thread; so prevent concurrency problems.
         return new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
             @Override
             public Thread newThread(Runnable r) {
-                return new InvocationMonitorThread(r, threadGroup);
+                return new InvocationMonitorThread(r, hzName);
             }
         });
     }
@@ -177,13 +185,24 @@ class InvocationMonitor implements PacketHandler, MetricsProvider {
     }
 
     void onMemberLeft(MemberImpl member) {
+        // Member list version at the time of member removal. Since version is read after member removal,
+        // this is guaranteed to be greater than version in invocations whose target was left member.
+        int memberListVersion = nodeEngine.getClusterService().getMemberListVersion();
         // postpone notifying invocations since real response may arrive in the mean time.
-        scheduler.schedule(new OnMemberLeftTask(member), ON_MEMBER_LEFT_DELAY_MILLIS, MILLISECONDS);
+        scheduler.execute(new OnMemberLeftTask(member, memberListVersion));
+    }
+
+    void execute(Runnable runnable) {
+        scheduler.execute(runnable);
+    }
+
+    void schedule(Runnable command, long delayMillis) {
+        scheduler.schedule(command, delayMillis, MILLISECONDS);
     }
 
     @Override
-    public void handle(Packet packet) {
-        scheduler.execute(new ProcessOperationHeartbeatsTask(packet));
+    public void accept(Packet packet) {
+        scheduler.execute(new ProcessOperationControlTask(packet));
     }
 
     public void start() {
@@ -191,10 +210,10 @@ class InvocationMonitor implements PacketHandler, MetricsProvider {
         scheduler.scheduleAtFixedRate(
                 monitorInvocationsTask, 0, monitorInvocationsTask.periodMillis, MILLISECONDS);
 
-        BroadcastOperationHeartbeatsTask broadcastOperationHeartbeatsTask
-                = new BroadcastOperationHeartbeatsTask(heartbeatBroadcastPeriodMillis);
+        BroadcastOperationControlTask broadcastOperationControlTask
+                = new BroadcastOperationControlTask(heartbeatBroadcastPeriodMillis);
         scheduler.scheduleAtFixedRate(
-                broadcastOperationHeartbeatsTask, 0, broadcastOperationHeartbeatsTask.periodMillis, MILLISECONDS);
+                broadcastOperationControlTask, 0, broadcastOperationControlTask.periodMillis, MILLISECONDS);
     }
 
     public void shutdown() {
@@ -210,7 +229,7 @@ class InvocationMonitor implements PacketHandler, MetricsProvider {
             return 0;
         }
 
-        AtomicLong heartbeat = lastHeartbeatPerMember.get(memberAddress);
+        AtomicLong heartbeat = heartbeatPerMember.get(memberAddress);
         return heartbeat == null ? 0 : heartbeat.get();
     }
 
@@ -286,18 +305,9 @@ class InvocationMonitor implements PacketHandler, MetricsProvider {
             int normalTimeouts = 0;
             int invocationCount = 0;
 
-            Set<Map.Entry<Long, Invocation>> invocations = invocationRegistry.entrySet();
-            Iterator<Map.Entry<Long, Invocation>> iterator = invocations.iterator();
-            while (iterator.hasNext()) {
+            for (Entry<Long, Invocation> e : invocationRegistry.entrySet()) {
                 invocationCount++;
-                Map.Entry<Long, Invocation> entry = iterator.next();
-                Long callId = entry.getKey();
-                Invocation inv = entry.getValue();
-
-                if (duplicate(inv, callId, iterator)) {
-                    continue;
-                }
-
+                Invocation inv = e.getValue();
                 try {
                     if (inv.detectAndHandleTimeout(invocationTimeoutMillis)) {
                         normalTimeouts++;
@@ -313,38 +323,6 @@ class InvocationMonitor implements PacketHandler, MetricsProvider {
             backupTimeoutsCount.inc(backupTimeouts);
             normalTimeoutsCount.inc(normalTimeouts);
             log(invocationCount, backupTimeouts, normalTimeouts);
-        }
-
-        /**
-         * The reason for the following if check is a workaround for the problem explained below.
-         *
-         * Problematic scenario :
-         * If an invocation with callId 1 is retried twice for any reason,
-         * two new innovations created and registered to invocation registry with callId’s 2 and 3 respectively.
-         * Both new invocations are sharing the same operation
-         * When one of the new invocations, say the one with callId 2 finishes, it de-registers itself from the
-         * invocation registry.
-         * When doing the de-registration it sets the shared operation’s callId to 0.
-         * After that when the invocation with the callId 3 completes, it tries to de-register itself from
-         * invocation registry
-         * but fails to do so since the invocation callId and the callId on the operation is not matching anymore
-         * When InvocationMonitor thread kicks in, it sees that there is an invocation in the registry,
-         * and asks whether invocation is finished or not.
-         * Even if the remote node replies with invocation is timed out,
-         * It can’t be de-registered from the registry because of aforementioned non-matching callId scenario.
-         *
-         * Workaround:
-         * When InvocationMonitor kicks in, it will do a check for invocations that are completed
-         * but their callId's are not matching with their operations. If any invocation found for that type,
-         * it is removed from the invocation registry.
-         */
-        private boolean duplicate(Invocation inv, long callId, Iterator iterator) {
-            if (callId != inv.op.getCallId() && inv.future.isDone()) {
-                iterator.remove();
-                return true;
-            }
-
-            return false;
         }
 
         private void log(int invocationCount, int backupTimeouts, int invocationTimeouts) {
@@ -365,23 +343,27 @@ class InvocationMonitor implements PacketHandler, MetricsProvider {
 
     private final class OnMemberLeftTask extends MonitorTask {
         private final MemberImpl leftMember;
+        private final int memberListVersion;
 
-        private OnMemberLeftTask(MemberImpl leftMember) {
+        private OnMemberLeftTask(MemberImpl leftMember, int memberListVersion) {
             this.leftMember = leftMember;
+            this.memberListVersion = memberListVersion;
         }
 
         @Override
         public void run0() {
-            lastHeartbeatPerMember.remove(leftMember.getAddress());
+            heartbeatPerMember.remove(leftMember.getAddress());
 
             for (Invocation invocation : invocationRegistry) {
-                if (hasMemberLeft(invocation)) {
-                    invocation.notifyError(new MemberLeftException(leftMember));
+                if (hasTargetLeft(invocation)) {
+                    onTargetLoss(invocation);
+                } else {
+                    onPotentialBackupLoss(invocation);
                 }
             }
         }
 
-        private boolean hasMemberLeft(Invocation invocation) {
+        private boolean hasTargetLeft(Invocation invocation) {
             MemberImpl targetMember = invocation.targetMember;
             if (targetMember == null) {
                 Address invTarget = invocation.invTarget;
@@ -390,95 +372,135 @@ class InvocationMonitor implements PacketHandler, MetricsProvider {
                 return leftMember.getUuid().equals(targetMember.getUuid());
             }
         }
+
+        private void onTargetLoss(Invocation invocation) {
+            // Notify only if invocation's target is left member and invocation's member-list-version
+            // is lower than member-list-version at time of member removal.
+            //
+            // Comparison of invocation's target and left member is done using member UUID.
+            // Normally Hazelcast does not support crash-recover, a left member cannot rejoin
+            // with the same UUID. Hence UUID comparison is enough.
+            //
+            // But Hot-Restart breaks this limitation and when Hot-Restart is enabled a member
+            // can restore its UUID and it's allowed to rejoin when cluster state is FROZEN or PASSIVE.
+            //
+            // That's why another ordering property is needed. Invocation keeps member-list-version before
+            // operation is submitted to the target. If a member restarts with the same identity (UUID),
+            // by comparing member-list-version during member removal with the invocation's member-list-version
+            // we can determine whether invocation is submitted before member left or after restart.
+            if (invocation.memberListVersion < memberListVersion) {
+                invocation.notifyError(new MemberLeftException(leftMember));
+            }
+        }
+
+        private void onPotentialBackupLoss(Invocation invocation) {
+            invocation.notifyBackupComplete();
+        }
     }
 
-    private final class ProcessOperationHeartbeatsTask extends MonitorTask {
-        // either a packet or a long-array.
-        private Object callIds;
+    private final class ProcessOperationControlTask extends MonitorTask {
+        // either OperationControl or Packet that contains it
+        private final Object payload;
+        private final Address sender;
 
-        private ProcessOperationHeartbeatsTask(Object callIds) {
-            this.callIds = callIds;
+        ProcessOperationControlTask(OperationControl payload) {
+            this.payload = payload;
+            this.sender = thisAddress;
+        }
+
+        ProcessOperationControlTask(Packet payload) {
+            this.payload = payload;
+            this.sender = payload.getConn().getEndPoint();
         }
 
         @Override
         public void run0() {
             heartbeatPacketsReceived.inc();
-            long timeMillis = Clock.currentTimeMillis();
-
-            updateMemberHeartbeat(timeMillis);
-
-            for (long callId : (long[]) serializationService.toObject(callIds)) {
-                updateHeartbeat(callId, timeMillis);
+            long nowMillis = Clock.currentTimeMillis();
+            updateMemberHeartbeat(nowMillis);
+            final OperationControl opControl = serializationService.toObject(payload);
+            for (long callId : opControl.runningOperations()) {
+                updateHeartbeat(callId, nowMillis);
+            }
+            for (CanCancelOperations service : serviceManager.getServices(CanCancelOperations.class)) {
+                final long[] opsToCancel = opControl.operationsToCancel();
+                for (int i = 0; i < opsToCancel.length; i++) {
+                    if (opsToCancel[i] != -1 && service.cancelOperation(sender, opsToCancel[i])) {
+                        opsToCancel[i] = -1;
+                    }
+                }
             }
         }
 
-        private void updateMemberHeartbeat(long timeMillis) {
-            Address address = callIds instanceof Packet ? ((Packet) callIds).getConn().getEndPoint() : thisAddress;
-            AtomicLong lastMemberHeartbeat = lastHeartbeatPerMember.get(address);
-            if (lastMemberHeartbeat == null) {
-                lastMemberHeartbeat = new AtomicLong();
-                lastHeartbeatPerMember.put(address, lastMemberHeartbeat);
+        private void updateMemberHeartbeat(long nowMillis) {
+            AtomicLong heartbeat = heartbeatPerMember.get(sender);
+            if (heartbeat == null) {
+                heartbeat = new AtomicLong(nowMillis);
+                heartbeatPerMember.put(sender, heartbeat);
+                return;
             }
 
-            lastMemberHeartbeat.set(timeMillis);
+            heartbeat.set(nowMillis);
         }
 
-        private void updateHeartbeat(long callId, long timeMillis) {
+        private void updateHeartbeat(long callId, long nowMillis) {
             Invocation invocation = invocationRegistry.get(callId);
             if (invocation == null) {
                 // the invocation doesn't exist anymore, so we are done.
                 return;
             }
 
-            invocation.lastHeartbeatMillis = timeMillis;
+            invocation.lastHeartbeatMillis = nowMillis;
         }
     }
 
-    private final class BroadcastOperationHeartbeatsTask extends FixedRateMonitorTask {
-        private final LiveOperations liveOperations = new LiveOperations(thisAddress);
+    private final class BroadcastOperationControlTask extends FixedRateMonitorTask {
+        private final CallsPerMember calls = new CallsPerMember(thisAddress);
 
-        private BroadcastOperationHeartbeatsTask(long periodMillis) {
+        private BroadcastOperationControlTask(long periodMillis) {
             super(periodMillis);
         }
 
         @Override
         public void run0() {
-            LiveOperations result = populate();
-            Set<Address> addresses = result.addresses();
-
+            CallsPerMember calls = populate();
+            Set<Address> addresses = calls.addresses();
             if (logger.isFinestEnabled()) {
-                logger.finest("Broadcasting operation heartbeats to: " + addresses.size() + " members");
+                logger.finest("Broadcasting operation control packets to: " + addresses.size() + " members");
             }
-
             for (Address address : addresses) {
-                sendHeartbeats(address, result.callIds(address));
+                sendOpControlPacket(address, calls.toOpControl(address));
             }
         }
 
-        private LiveOperations populate() {
-            liveOperations.clear();
+        private CallsPerMember populate() {
+            calls.clear();
 
             ClusterService clusterService = nodeEngine.getClusterService();
-            liveOperations.initMember(thisAddress);
+            calls.ensureMember(thisAddress);
             for (Member member : clusterService.getMembers()) {
-                liveOperations.initMember(member.getAddress());
+                calls.ensureMember(member.getAddress());
             }
-
             for (LiveOperationsTracker tracker : serviceManager.getServices(LiveOperationsTracker.class)) {
-                tracker.populate(liveOperations);
+                tracker.populate(calls);
             }
-
-            return liveOperations;
+            for (Invocation invocation : invocationRegistry) {
+                if (invocation.future.isCancelled()) {
+                    calls.addOpToCancel(invocation.invTarget, invocation.op.getCallId());
+                }
+            }
+            return calls;
         }
 
-        private void sendHeartbeats(Address address, long[] callIds) {
+        private void sendOpControlPacket(Address address, OperationControl opControl) {
             heartbeatPacketsSend.inc();
 
             if (address.equals(thisAddress)) {
-                scheduler.execute(new ProcessOperationHeartbeatsTask(callIds));
+                scheduler.execute(new ProcessOperationControlTask(opControl));
             } else {
-                Packet packet = new Packet(serializationService.toBytes(callIds))
-                        .setAllFlags(FLAG_OP | FLAG_OP_CONTROL | FLAG_URGENT);
+                Packet packet = new Packet(serializationService.toBytes(opControl))
+                        .setPacketType(Packet.Type.OPERATION)
+                        .raiseFlags(FLAG_OP_CONTROL | FLAG_URGENT);
                 nodeEngine.getNode().getConnectionManager().transmit(packet, address);
             }
         }
@@ -489,8 +511,8 @@ class InvocationMonitor implements PacketHandler, MetricsProvider {
      * is not going to schedule any operations on this thread due to retry.
      */
     private static final class InvocationMonitorThread extends Thread implements OperationHostileThread {
-        private InvocationMonitorThread(Runnable task, HazelcastThreadGroup hzThreadGroup) {
-            super(hzThreadGroup.getInternalThreadGroup(), task, hzThreadGroup.getThreadNamePrefix("InvocationMonitorThread"));
+        private InvocationMonitorThread(Runnable task, String hzName) {
+            super(task, createThreadName(hzName, "InvocationMonitorThread"));
         }
     }
 }

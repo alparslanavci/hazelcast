@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -72,5 +72,13 @@ public final class OperationFactoryWrapper implements OperationFactory {
     @Override
     public int getId() {
         return ClientDataSerializerHook.OP_FACTORY_WRAPPER;
+    }
+
+    @Override
+    public String toString() {
+        return "OperationFactoryWrapper{"
+                + "opFactory=" + opFactory
+                + ", uuid='" + uuid + '\''
+                + '}';
     }
 }

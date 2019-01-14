@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,6 +35,14 @@ public class LocalLockCleanupOperation extends UnlockOperation implements Notifi
 
     private final String uuid;
 
+    /**
+     * This constructor should not be used to obtain an instance of this class; it exists to fulfill IdentifiedDataSerializable
+     * coding conventions.
+     */
+    public LocalLockCleanupOperation() {
+        uuid = "";
+    }
+
     public LocalLockCleanupOperation(ObjectNamespace namespace, Data key, String uuid) {
         super(namespace, key, -1, true);
         this.uuid = uuid;
@@ -48,7 +56,7 @@ public class LocalLockCleanupOperation extends UnlockOperation implements Notifi
             ILogger logger = getLogger();
             if (logger.isFinestEnabled()) {
                 logger.finest(
-                        "Unlocking lock owned by uuid: " + uuid + ", thread-id: " + lock.getThreadId() + ", count: "
+                        "Unlocking lock owned by UUID: " + uuid + ", thread ID: " + lock.getThreadId() + ", count: "
                                 + lock.getLockCount());
             }
             response = lockStore.forceUnlock(key);
@@ -71,5 +79,10 @@ public class LocalLockCleanupOperation extends UnlockOperation implements Notifi
     @Override
     protected void readInternal(ObjectDataInput in) throws IOException {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getId() {
+        throw new UnsupportedOperationException("LocalLockCleanupOperation is local only.");
     }
 }

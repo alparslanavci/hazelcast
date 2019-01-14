@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,6 @@
 
 package com.hazelcast.spi.discovery.integration;
 
-import com.hazelcast.spi.annotation.Beta;
-
 /**
  * The <tt>DiscoveryServiceProvider</tt> interface provides the possibility to build {@link DiscoveryService}s.
  * <tt>DiscoveryService</tt> implementations should be immutable and therefore the provider is introduced to
@@ -27,7 +25,6 @@ import com.hazelcast.spi.annotation.Beta;
  *
  * @since 3.6
  */
-@Beta
 public interface DiscoveryServiceProvider {
 
     /**

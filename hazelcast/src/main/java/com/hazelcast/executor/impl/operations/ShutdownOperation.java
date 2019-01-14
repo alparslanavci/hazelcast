@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,12 @@
 package com.hazelcast.executor.impl.operations;
 
 import com.hazelcast.executor.impl.DistributedExecutorService;
+import com.hazelcast.executor.impl.ExecutorDataSerializerHook;
+import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.spi.impl.AbstractNamedOperation;
+import com.hazelcast.spi.impl.MutatingOperation;
 
-public final class ShutdownOperation extends AbstractNamedOperation {
+public final class ShutdownOperation extends AbstractNamedOperation implements MutatingOperation, IdentifiedDataSerializable {
 
     public ShutdownOperation() {
     }
@@ -42,5 +45,15 @@ public final class ShutdownOperation extends AbstractNamedOperation {
     @Override
     public Object getResponse() {
         return Boolean.TRUE;
+    }
+
+    @Override
+    public int getFactoryId() {
+        return ExecutorDataSerializerHook.F_ID;
+    }
+
+    @Override
+    public int getId() {
+        return ExecutorDataSerializerHook.SHUTDOWN;
     }
 }

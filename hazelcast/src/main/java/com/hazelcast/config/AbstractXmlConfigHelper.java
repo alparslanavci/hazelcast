@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@ import com.hazelcast.logging.Logger;
 import com.hazelcast.memory.MemorySize;
 import com.hazelcast.memory.MemoryUnit;
 import com.hazelcast.util.StringUtil;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.w3c.dom.Document;
 import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
@@ -48,8 +47,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.URL;
 import java.nio.ByteOrder;
-import java.text.DecimalFormat;
-import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.Map;
@@ -58,18 +55,24 @@ import java.util.Properties;
 
 import static com.hazelcast.nio.IOUtil.closeResource;
 import static com.hazelcast.util.StringUtil.LINE_SEPARATOR;
+import static com.hazelcast.util.StringUtil.isNullOrEmpty;
 import static com.hazelcast.util.StringUtil.upperCaseInternal;
 import static java.lang.Boolean.parseBoolean;
+import static java.lang.Double.parseDouble;
+import static java.lang.String.format;
 
 /**
- * Contains Hazelcast Xml Configuration helper methods and variables.
+ * Contains Hazelcast XML Configuration helper methods and variables.
  */
+@SuppressWarnings("checkstyle:methodcount")
 public abstract class AbstractXmlConfigHelper {
 
     private static final ILogger LOGGER = Logger.getLogger(AbstractXmlConfigHelper.class);
 
     protected boolean domLevel3 = true;
+
     final String xmlns = "http://www.hazelcast.com/schema/" + getNamespaceType();
+
     private final String hazelcastSchemaLocation = getXmlType().name + "-config-" + getReleaseVersion() + ".xsd";
 
     public static Iterable<Node> childElements(Node node) {
@@ -86,11 +89,11 @@ public abstract class AbstractXmlConfigHelper {
         private final int maximum;
         private final short nodeType;
 
-        IterableNodeList(final Node parent, short nodeType) {
+        IterableNodeList(Node parent, short nodeType) {
             this(parent.getChildNodes(), nodeType);
         }
 
-        IterableNodeList(final NodeList wrapped, short nodeType) {
+        IterableNodeList(NodeList wrapped, short nodeType) {
             this.wrapped = wrapped;
             this.nodeType = nodeType;
             this.maximum = wrapped.getLength();
@@ -129,12 +132,12 @@ public abstract class AbstractXmlConfigHelper {
         }
     }
 
-    protected ConfigType getXmlType() {
-        return ConfigType.SERVER;
-    }
-
     public String getNamespaceType() {
         return getXmlType().name.equals("hazelcast") ? "config" : "client-config";
+    }
+
+    protected ConfigType getXmlType() {
+        return ConfigType.SERVER;
     }
 
     protected void schemaValidation(Document doc) throws Exception {
@@ -143,20 +146,19 @@ public abstract class AbstractXmlConfigHelper {
         String schemaLocation = doc.getDocumentElement().getAttribute("xsi:schemaLocation");
         schemaLocation = schemaLocation.replaceAll("^ +| +$| (?= )", "");
 
-
-        //get every two pair. every pair includes namespace and uri
+        // get every two pair. every pair includes namespace and uri
         String[] xsdLocations = schemaLocation.split("(?<!\\G\\S+)\\s");
 
         for (String xsdLocation : xsdLocations) {
             if (xsdLocation.isEmpty()) {
                 continue;
             }
-            String namespace = xsdLocation.split('[' +  LINE_SEPARATOR + " ]+")[0];
-            String uri = xsdLocation.split('[' +  LINE_SEPARATOR + " ]+")[1];
+            String namespace = xsdLocation.split('[' + LINE_SEPARATOR + " ]+")[0];
+            String uri = xsdLocation.split('[' + LINE_SEPARATOR + " ]+")[1];
 
             // if this is hazelcast namespace but location is different log only warning
             if (namespace.equals(xmlns) && !uri.endsWith(hazelcastSchemaLocation)) {
-                LOGGER.warning("Name of the hazelcast schema location incorrect using default");
+                LOGGER.warning("Name of the hazelcast schema location is incorrect, using default");
             }
 
             // if this is not hazelcast namespace then try to load from uri
@@ -169,7 +171,7 @@ public abstract class AbstractXmlConfigHelper {
         // include hazelcast schema
         schemas.add(new StreamSource(getClass().getClassLoader().getResourceAsStream(hazelcastSchemaLocation)));
 
-        // document to inputstream conversion
+        // document to InputStream conversion
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         Source xmlSource = new DOMSource(doc);
         Result outputTarget = new StreamResult(outputStream);
@@ -178,13 +180,13 @@ public abstract class AbstractXmlConfigHelper {
 
         // schema validation
         SchemaFactory schemaFactory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
-        Schema schema = schemaFactory.newSchema(schemas.toArray(new Source[schemas.size()]));
+        Schema schema = schemaFactory.newSchema(schemas.toArray(new Source[0]));
         Validator validator = schema.newValidator();
         try {
             SAXSource source = new SAXSource(new InputSource(is));
             validator.validate(source);
         } catch (Exception e) {
-            throw new InvalidConfigurationException(e.getMessage());
+            throw new InvalidConfigurationException(e.getMessage(), e);
         } finally {
             for (StreamSource source : schemas) {
                 closeResource(source.getInputStream());
@@ -201,7 +203,7 @@ public abstract class AbstractXmlConfigHelper {
             try {
                 inputStream = new URL(schemaLocation).openStream();
             } catch (Exception e) {
-                throw new InvalidConfigurationException("Your xsd schema couldn't be load");
+                throw new InvalidConfigurationException("Your xsd schema couldn't be loaded");
             }
         }
         return inputStream;
@@ -209,10 +211,15 @@ public abstract class AbstractXmlConfigHelper {
 
     protected String getReleaseVersion() {
         BuildInfo buildInfo = BuildInfoProvider.getBuildInfo();
-        return buildInfo.getVersion().substring(0, 3);
+        String[] versionTokens = StringUtil.tokenizeVersionString(buildInfo.getVersion());
+        return versionTokens[0] + "." + versionTokens[1];
     }
 
     protected String xmlToJavaName(final String name) {
+        String javaRefName = xmlRefToJavaName(name);
+        if (javaRefName != null) {
+            return javaRefName;
+        }
         final StringBuilder builder = new StringBuilder();
         final char[] charArray = name.toCharArray();
         boolean dash = false;
@@ -228,6 +235,13 @@ public abstract class AbstractXmlConfigHelper {
         }
         appendToken(builder, token);
         return builder.toString();
+    }
+
+    private String xmlRefToJavaName(final String name) {
+        if (name.equals("quorum-ref")) {
+            return "quorumName";
+        }
+        return null;
     }
 
     protected void appendToken(final StringBuilder builder, final StringBuilder token) {
@@ -297,10 +311,15 @@ public abstract class AbstractXmlConfigHelper {
         try {
             return Integer.parseInt(value);
         } catch (final NumberFormatException e) {
-            throw new InvalidConfigurationException(
-                    String.format("Invalid integer value for parameter %s: %s", parameterName, value));
+            throw new InvalidConfigurationException(format("Invalid integer value for parameter %s: %s", parameterName, value));
         }
+    }
 
+    protected static int getIntegerValue(final String parameterName, final String value, int defaultValue) {
+        if (isNullOrEmpty(value)) {
+            return defaultValue;
+        }
+        return getIntegerValue(parameterName, value);
     }
 
     protected static long getLongValue(final String parameterName, final String value) {
@@ -308,8 +327,31 @@ public abstract class AbstractXmlConfigHelper {
             return Long.parseLong(value);
         } catch (final Exception e) {
             throw new InvalidConfigurationException(
-                    String.format("Invalid long integer value for parameter %s: %s", parameterName, value));
+                    format("Invalid long integer value for parameter %s: %s", parameterName, value));
         }
+    }
+
+    protected static long getLongValue(final String parameterName, final String value, long defaultValue) {
+        if (isNullOrEmpty(value)) {
+            return defaultValue;
+        }
+        return getLongValue(parameterName, value);
+    }
+
+    protected static double getDoubleValue(final String parameterName, final String value) {
+        try {
+            return parseDouble(value);
+        } catch (final Exception e) {
+            throw new InvalidConfigurationException(
+                    format("Invalid long integer value for parameter %s: %s", parameterName, value));
+        }
+    }
+
+    protected static double getDoubleValue(final String parameterName, final String value, double defaultValue) {
+        if (isNullOrEmpty(value)) {
+            return defaultValue;
+        }
+        return getDoubleValue(parameterName, value);
     }
 
     protected String getAttribute(Node node, String attName) {
@@ -407,6 +449,8 @@ public abstract class AbstractXmlConfigHelper {
                 fillPortableFactories(child, serializationConfig);
             } else if ("serializers".equals(name)) {
                 fillSerializers(child, serializationConfig);
+            } else if ("java-serialization-filter".equals(name)) {
+                fillJavaSerializationFilter(child, serializationConfig);
             }
         }
         return serializationConfig;
@@ -465,7 +509,39 @@ public abstract class AbstractXmlConfigHelper {
         }
     }
 
-    @SuppressFBWarnings("DM_BOXED_PRIMITIVE_FOR_PARSING")
+    protected void fillJavaSerializationFilter(final Node node, SerializationConfig serializationConfig) {
+        JavaSerializationFilterConfig filterConfig = new JavaSerializationFilterConfig();
+        serializationConfig.setJavaSerializationFilterConfig(filterConfig);
+        Node defaultsDisabledNode = node.getAttributes().getNamedItem("defaults-disabled");
+        boolean defaultsDisabled = defaultsDisabledNode != null && getBooleanValue(getTextContent(defaultsDisabledNode));
+        filterConfig.setDefaultsDisabled(defaultsDisabled);
+        for (Node child : childElements(node)) {
+            final String name = cleanNodeName(child);
+            if ("blacklist".equals(name)) {
+                ClassFilter list = parseClassFilterList(child);
+                filterConfig.setBlacklist(list);
+            } else if ("whitelist".equals(name)) {
+                ClassFilter list = parseClassFilterList(child);
+                filterConfig.setWhitelist(list);
+            }
+        }
+    }
+
+    private ClassFilter parseClassFilterList(Node node) {
+        ClassFilter list = new ClassFilter();
+        for (Node child : childElements(node)) {
+            final String name = cleanNodeName(child);
+            if ("class".equals(name)) {
+                list.addClasses(getTextContent(child));
+            } else if ("package".equals(name)) {
+                list.addPackages(getTextContent(child));
+            } else if ("prefix".equals(name)) {
+                list.addPrefixes(getTextContent(child));
+            }
+        }
+        return list;
+    }
+
     protected void fillNativeMemoryConfig(Node node, NativeMemoryConfig nativeMemoryConfig) {
         final NamedNodeMap atts = node.getAttributes();
         final Node enabledNode = atts.getNamedItem("enabled");
@@ -485,7 +561,7 @@ public abstract class AbstractXmlConfigHelper {
                 final NamedNodeMap attrs = n.getAttributes();
                 final String value = getTextContent(attrs.getNamedItem("value"));
                 final MemoryUnit unit = MemoryUnit.valueOf(getTextContent(attrs.getNamedItem("unit")));
-                MemorySize memorySize = new MemorySize(Long.valueOf(value), unit);
+                MemorySize memorySize = new MemorySize(Long.parseLong(value), unit);
                 nativeMemoryConfig.setSize(memorySize);
             } else if ("min-block-size".equals(nodeName)) {
                 String value = getTextContent(n);
@@ -495,13 +571,7 @@ public abstract class AbstractXmlConfigHelper {
                 nativeMemoryConfig.setPageSize(Integer.parseInt(value));
             } else if ("metadata-space-percentage".equals(nodeName)) {
                 String value = getTextContent(n);
-                try {
-                    Number percentage = new DecimalFormat("##.#").parse(value);
-                    nativeMemoryConfig.setMetadataSpacePercentage(percentage.floatValue());
-                } catch (ParseException e) {
-                    LOGGER.info("Metadata space percentage, [" + value
-                            + "], is not a proper value. Default value will be used!");
-                }
+                nativeMemoryConfig.setMetadataSpacePercentage(Float.parseFloat(value));
             }
         }
     }

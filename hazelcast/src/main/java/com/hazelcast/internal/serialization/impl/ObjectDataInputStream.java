@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.hazelcast.internal.serialization.impl;
 
 import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.nio.Bits;
-import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.serialization.Data;
 
 import java.io.Closeable;
@@ -29,7 +28,9 @@ import java.nio.ByteOrder;
 
 import static com.hazelcast.nio.Bits.NULL_ARRAY_LENGTH;
 
-public class ObjectDataInputStream extends InputStream implements ObjectDataInput, Closeable {
+public class ObjectDataInputStream extends VersionedObjectDataInput implements Closeable {
+
+    private static final int SHORT_MASK = 0xFFFF;
 
     private final InternalSerializationService serializationService;
     private final DataInputStream dataInput;
@@ -104,7 +105,7 @@ public class ObjectDataInputStream extends InputStream implements ObjectDataInpu
 
     @Override
     public int readUnsignedShort() throws IOException {
-        return readShort();
+        return readShort() & SHORT_MASK;
     }
 
     @Override
@@ -334,16 +335,31 @@ public class ObjectDataInputStream extends InputStream implements ObjectDataInpu
         return serializationService.readObject(this);
     }
 
+    // a future optimization would be to skip the construction of the Data object.
+    @Override
+    public <T> T readDataAsObject() throws IOException {
+        Data data = readData();
+        return data == null ? null : (T) serializationService.toObject(data);
+    }
+
+    @Override
+    public Object readObject(Class aClass) throws IOException {
+        return serializationService.readObject(this, aClass);
+    }
+
     @Override
     public Data readData() throws IOException {
         byte[] bytes = readByteArray();
-        Data data = bytes != null ? new HeapData(bytes) : null;
-        return data;
+        return bytes == null ? null : new HeapData(bytes);
     }
 
     @Override
     public ClassLoader getClassLoader() {
         return serializationService.getClassLoader();
+    }
+
+    public InternalSerializationService getSerializationService() {
+        return serializationService;
     }
 
     @Override

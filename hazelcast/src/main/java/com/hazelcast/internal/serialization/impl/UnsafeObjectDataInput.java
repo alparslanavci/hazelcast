@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -257,7 +257,7 @@ class UnsafeObjectDataInput extends ByteArrayObjectDataInput {
     }
 
     private void memCopy(final Object dest, final long destOffset, final int length, final int indexScale)
-    throws EOFException {
+            throws EOFException {
         if (length < 0) {
             throw new NegativeArraySizeException("Destination length is negative: " + length);
         }

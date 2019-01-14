@@ -1,10 +1,26 @@
+/*
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.hazelcast.query.impl.predicates;
 
 import com.hazelcast.core.TypeConverter;
 import com.hazelcast.query.Predicate;
 import com.hazelcast.query.impl.FalsePredicate;
-import com.hazelcast.query.impl.Index;
 import com.hazelcast.query.impl.Indexes;
+import com.hazelcast.query.impl.InternalIndex;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelTest;
 import com.hazelcast.test.annotation.QuickTest;
@@ -34,12 +50,12 @@ public class BetweenVisitorTest {
 
     private BetweenVisitor visitor;
     private Indexes mockIndexes;
-    private Index mockIndex;
+    private InternalIndex mockIndex;
 
     @Before
     public void setUp() {
         mockIndexes = mock(Indexes.class);
-        mockIndex = mock(Index.class);
+        mockIndex = mock(InternalIndex.class);
         when(mockIndexes.getIndex(anyString())).thenReturn(mockIndex);
         visitor = new BetweenVisitor();
         useConverter(INTEGER_CONVERTER);
@@ -129,7 +145,7 @@ public class BetweenVisitorTest {
     }
 
     @Test
-    public void whenGreatesOrEqualsThanXandLessOrEqualsThanYAndSomeOtherPredicate_thenRewriteToBetweenXandYAndSomeOtherPredicate() {
+    public void whenGreaterOrEqualsThanXandLessOrEqualsThanYAndSomeOtherPredicate_thenRewriteToBetweenXandYAndSomeOtherPredicate() {
         Predicate left = greaterEqual("attribute", 5);
         Predicate right = lessEqual("attribute", 6);
         Predicate other = lessEqual("otherAttribute", 6);

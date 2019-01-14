@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,8 @@ public final class MemoryStatsSupport {
     /**
      * No public constructor is needed for utility classes
      */
-    private MemoryStatsSupport() { }
+    private MemoryStatsSupport() {
+    }
 
     /**
      * Returns the total available physical memory on the system in bytes or -1 if not available.
@@ -67,5 +68,4 @@ public final class MemoryStatsSupport {
     public static long freeSwapSpace() {
         return readLongAttribute("FreeSwapSpaceSize", -1L);
     }
-
 }

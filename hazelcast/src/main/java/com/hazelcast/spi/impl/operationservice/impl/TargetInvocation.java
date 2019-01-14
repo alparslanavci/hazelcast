@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,10 +31,26 @@ final class TargetInvocation extends Invocation {
 
     private final Address target;
 
-    TargetInvocation(Context context, Operation op, Address target,
-                            int tryCount, long tryPauseMillis, long callTimeoutMillis, boolean deserialize) {
-        super(context, op, tryCount, tryPauseMillis, callTimeoutMillis, deserialize);
+    TargetInvocation(Context context,
+                     Operation op,
+                     Address target,
+                     Runnable doneCallback,
+                     int tryCount,
+                     long tryPauseMillis,
+                     long callTimeoutMillis,
+                     boolean deserialize) {
+        super(context, op, doneCallback, tryCount, tryPauseMillis, callTimeoutMillis, deserialize);
         this.target = target;
+    }
+
+    TargetInvocation(Context context,
+                     Operation op,
+                     Address target,
+                     int tryCount,
+                     long tryPauseMillis,
+                     long callTimeoutMillis,
+                     boolean deserialize) {
+        this(context, op, target, null, tryCount, tryPauseMillis, callTimeoutMillis, deserialize);
     }
 
     @Override

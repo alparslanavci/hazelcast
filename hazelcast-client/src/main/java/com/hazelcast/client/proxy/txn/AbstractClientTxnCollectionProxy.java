@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,16 +20,14 @@ import com.hazelcast.client.spi.ClientTransactionContext;
 
 /**
  * Abstract proxy collection implementation of {@link com.hazelcast.transaction.TransactionalObject}.
- *
- * @param <E> the type of elements in this collection
  */
-public abstract class AbstractClientTxnCollectionProxy<E> extends ClientTxnProxy {
+abstract class AbstractClientTxnCollectionProxy extends ClientTxnProxy {
 
-    protected AbstractClientTxnCollectionProxy(String name, ClientTransactionContext transactionContext) {
+    AbstractClientTxnCollectionProxy(String name, ClientTransactionContext transactionContext) {
         super(name, transactionContext);
     }
 
+    @Override
     void onDestroy() {
     }
-
 }

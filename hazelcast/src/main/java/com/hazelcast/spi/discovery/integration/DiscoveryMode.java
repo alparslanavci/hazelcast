@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.hazelcast.spi.discovery.integration;
 
-import com.hazelcast.spi.annotation.Beta;
 import com.hazelcast.spi.discovery.DiscoveryStrategy;
 
 /**
@@ -29,7 +28,6 @@ import com.hazelcast.spi.discovery.DiscoveryStrategy;
  *
  * @since 3.6
  */
-@Beta
 public enum DiscoveryMode {
     /**
      * The current runtime environment is a Hazelcast member node

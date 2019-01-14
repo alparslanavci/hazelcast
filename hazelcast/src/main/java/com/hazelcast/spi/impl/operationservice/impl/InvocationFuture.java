@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,25 +16,29 @@
 
 package com.hazelcast.spi.impl.operationservice.impl;
 
+import com.hazelcast.core.IndeterminateOperationStateException;
+import com.hazelcast.core.MemberLeftException;
 import com.hazelcast.core.OperationTimeoutException;
+import com.hazelcast.nio.Packet;
 import com.hazelcast.nio.serialization.Data;
 import com.hazelcast.spi.impl.AbstractInvocationFuture;
+import com.hazelcast.spi.impl.operationservice.impl.responses.NormalResponse;
 
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import static com.hazelcast.spi.impl.operationservice.impl.InvocationValue.CALL_TIMEOUT;
-import static com.hazelcast.spi.impl.operationservice.impl.InvocationValue.HEARTBEAT_TIMEOUT;
-import static com.hazelcast.spi.impl.operationservice.impl.InvocationValue.INTERRUPTED;
+import static com.hazelcast.spi.impl.operationservice.impl.InvocationConstant.CALL_TIMEOUT;
+import static com.hazelcast.spi.impl.operationservice.impl.InvocationConstant.HEARTBEAT_TIMEOUT;
+import static com.hazelcast.spi.impl.operationservice.impl.InvocationConstant.INTERRUPTED;
+import static com.hazelcast.util.Clock.currentTimeMillis;
 import static com.hazelcast.util.ExceptionUtil.fixAsyncStackTrace;
 import static com.hazelcast.util.StringUtil.timeToString;
-import static java.lang.System.currentTimeMillis;
 
 /**
  * The InvocationFuture is the {@link com.hazelcast.spi.InternalCompletableFuture} that waits on the completion
- * of a {@link Invocation}. The Invocation executes an operation.
+ * of an {@link Invocation}. The Invocation executes an operation.
  * <p>
  * In the past the InvocationFuture.get logic was also responsible for detecting the heartbeat for blocking operations
  * using the CONTINUE_WAIT and detecting if an operation is still running using the IsStillRunning functionality. This
@@ -61,8 +65,8 @@ final class InvocationFuture<E> extends AbstractInvocationFuture<E> {
 
     @Override
     protected TimeoutException newTimeoutException(long timeout, TimeUnit unit) {
-        return new TimeoutException(invocation.op.getClass().getSimpleName() + " failed to complete within "
-                + timeout + " " + unit + ". " + invocation);
+        return new TimeoutException(String.format("%s failed to complete within %d %s. %s",
+                invocation.op.getClass().getSimpleName(), timeout, unit, invocation));
     }
 
     @Override
@@ -71,7 +75,7 @@ final class InvocationFuture<E> extends AbstractInvocationFuture<E> {
     }
 
     @Override
-    protected E resolveAndThrow(Object unresolved) throws ExecutionException, InterruptedException {
+    protected E resolveAndThrowIfException(Object unresolved) throws ExecutionException, InterruptedException {
         Object value = resolve(unresolved);
 
         if (value == null || !(value instanceof Throwable)) {
@@ -89,6 +93,7 @@ final class InvocationFuture<E> extends AbstractInvocationFuture<E> {
         }
     }
 
+    @SuppressWarnings("checkstyle:npathcomplexity")
     @Override
     protected Object resolve(Object unresolved) {
         if (unresolved == null) {
@@ -99,6 +104,9 @@ final class InvocationFuture<E> extends AbstractInvocationFuture<E> {
             return newOperationTimeoutException(false);
         } else if (unresolved == HEARTBEAT_TIMEOUT) {
             return newOperationTimeoutException(true);
+        } else if (unresolved.getClass() == Packet.class) {
+            NormalResponse response = invocation.context.serializationService.toObject(unresolved);
+            unresolved = response.getValue();
         }
 
         Object value = unresolved;
@@ -107,6 +115,11 @@ final class InvocationFuture<E> extends AbstractInvocationFuture<E> {
             if (value == null) {
                 return null;
             }
+        }
+
+        if (invocation.shouldFailOnIndeterminateOperationState() && (value instanceof MemberLeftException)) {
+            String message = invocation + " failed because the target has left the cluster before response is received";
+            value = new IndeterminateOperationStateException(message, (MemberLeftException) value);
         }
 
         if (value instanceof Throwable) {

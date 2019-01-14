@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,10 @@ import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.nio.Bits;
 import com.hazelcast.nio.BufferObjectDataOutput;
 import com.hazelcast.nio.serialization.Data;
+import com.hazelcast.spi.serialization.SerializationService;
+import com.hazelcast.util.collection.ArrayUtils;
 
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.ByteOrder;
 
 import static com.hazelcast.nio.Bits.CHAR_SIZE_IN_BYTES;
@@ -30,8 +31,9 @@ import static com.hazelcast.nio.Bits.INT_SIZE_IN_BYTES;
 import static com.hazelcast.nio.Bits.LONG_SIZE_IN_BYTES;
 import static com.hazelcast.nio.Bits.NULL_ARRAY_LENGTH;
 import static com.hazelcast.nio.Bits.SHORT_SIZE_IN_BYTES;
+import static com.hazelcast.version.Version.UNKNOWN;
 
-class ByteArrayObjectDataOutput extends OutputStream implements BufferObjectDataOutput {
+class ByteArrayObjectDataOutput extends VersionedObjectDataOutput implements BufferObjectDataOutput {
 
     final int initialSize;
 
@@ -63,9 +65,12 @@ class ByteArrayObjectDataOutput extends OutputStream implements BufferObjectData
 
     @Override
     public void write(byte[] b, int off, int len) {
-        if ((off < 0) || (len < 0) || ((off + len) > b.length)) {
-            throw new IndexOutOfBoundsException();
-        } else if (len == 0) {
+        if (b == null) {
+            throw new NullPointerException();
+        } else {
+            ArrayUtils.boundsCheck(b.length, off, len);
+        }
+        if (len == 0) {
             return;
         }
         ensureAvailable(len);
@@ -373,8 +378,13 @@ class ByteArrayObjectDataOutput extends OutputStream implements BufferObjectData
 
     @Override
     public void writeData(Data data) throws IOException {
-        byte[] payload = data != null ? data.toByteArray() : null;
-        writeByteArray(payload);
+        int len = data == null ? NULL_ARRAY_LENGTH : data.totalSize();
+        writeInt(len);
+        if (len > 0) {
+            ensureAvailable(len);
+            data.copyTo(buffer, pos);
+            pos += len;
+        }
     }
 
     /**
@@ -400,11 +410,17 @@ class ByteArrayObjectDataOutput extends OutputStream implements BufferObjectData
 
     @Override
     public byte toByteArray()[] {
+        return toByteArray(0);
+    }
+
+    @Override
+    public byte[] toByteArray(int padding) {
         if (buffer == null || pos == 0) {
-            return new byte[0];
+            return new byte[padding];
         }
-        final byte[] newBuffer = new byte[pos];
-        System.arraycopy(buffer, 0, newBuffer, 0, pos);
+
+        final byte[] newBuffer = new byte[padding + pos];
+        System.arraycopy(buffer, 0, newBuffer, padding, pos);
         return newBuffer;
     }
 
@@ -414,6 +430,7 @@ class ByteArrayObjectDataOutput extends OutputStream implements BufferObjectData
         if (buffer != null && buffer.length > initialSize * 8) {
             buffer = new byte[initialSize * 8];
         }
+        version = UNKNOWN;
     }
 
     @Override
@@ -425,6 +442,11 @@ class ByteArrayObjectDataOutput extends OutputStream implements BufferObjectData
     @Override
     public ByteOrder getByteOrder() {
         return isBigEndian ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
+    }
+
+    @Override
+    public SerializationService getSerializationService() {
+        return service;
     }
 
     @Override

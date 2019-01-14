@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.hazelcast.multimap.impl.txn;
 
+import com.hazelcast.multimap.impl.MultiMapDataSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.Data;
@@ -30,7 +31,7 @@ import java.util.List;
 
 public class MultiMapTransactionLogRecord implements TransactionLogRecord {
 
-    // todo: probably better to switch to an ArrayList to reduce litter.
+    // TODO: probably better to switch to an ArrayList to reduce litter
     private final List<Operation> opList = new LinkedList<Operation>();
     private int partitionId;
     private String name;
@@ -51,7 +52,7 @@ public class MultiMapTransactionLogRecord implements TransactionLogRecord {
 
     @Override
     public Operation newPrepareOperation() {
-        return new TxnPrepareOperation(partitionId, name, key, ttl, threadId);
+        return new TxnPrepareOperation(partitionId, name, key, threadId);
     }
 
     @Override
@@ -112,13 +113,13 @@ public class MultiMapTransactionLogRecord implements TransactionLogRecord {
         } else if (op instanceof TxnRemoveAllOperation) {
             TxnRemoveAllOperation removeAllOperation = (TxnRemoveAllOperation) op;
             Collection<Long> recordIds = removeAllOperation.getRecordIds();
-            Iterator<Operation> iter = opList.iterator();
-            while (iter.hasNext()) {
-                Operation opp = iter.next();
+            Iterator<Operation> iterator = opList.iterator();
+            while (iterator.hasNext()) {
+                Operation opp = iterator.next();
                 if (opp instanceof TxnPutOperation) {
                     TxnPutOperation putOperation = (TxnPutOperation) opp;
                     if (recordIds.remove(putOperation.getRecordId())) {
-                        iter.remove();
+                        iterator.remove();
                     }
                 }
             }
@@ -155,4 +156,13 @@ public class MultiMapTransactionLogRecord implements TransactionLogRecord {
                 + '}';
     }
 
+    @Override
+    public int getFactoryId() {
+        return MultiMapDataSerializerHook.F_ID;
+    }
+
+    @Override
+    public int getId() {
+        return MultiMapDataSerializerHook.MULTIMAP_TRANSACTION_LOG_RECORD;
+    }
 }

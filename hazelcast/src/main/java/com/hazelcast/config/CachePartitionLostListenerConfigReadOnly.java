@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.config;
 
 import com.hazelcast.cache.impl.event.CachePartitionLostListener;
+import com.hazelcast.nio.serialization.BinaryInterface;
 
 import java.util.EventListener;
 
@@ -24,8 +25,9 @@ import java.util.EventListener;
  * Read-Only Configuration for CachePartitionLostListener
  * @see CachePartitionLostListener
  *
- * @deprecated this class will be removed in 3.8; it is meant for internal usage only.
+ * @deprecated this class will be removed in 4.0; it is meant for internal usage only.
  */
+@BinaryInterface
 public class CachePartitionLostListenerConfigReadOnly
         extends CachePartitionLostListenerConfig {
 

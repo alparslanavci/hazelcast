@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.hazelcast.map.impl.query;
 
 import com.hazelcast.config.Config;
@@ -120,14 +136,14 @@ public class QueryResultSizeLimiterTest {
     public void testLocalPreCheckDisabled() {
         initMocksWithConfiguration(200000, QueryResultSizeLimiter.DISABLED);
 
-        limiter.checkMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
+        limiter.precheckMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
     }
 
     @Test
     public void testLocalPreCheckEnabledWithNoLocalPartitions() {
         initMocksWithConfiguration(200000, 1);
 
-        limiter.checkMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
+        limiter.precheckMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
     }
 
     @Test
@@ -136,7 +152,7 @@ public class QueryResultSizeLimiterTest {
         populatePartitions(partitionsSizes);
         initMocksWithConfiguration(200000, 1);
 
-        limiter.checkMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
+        limiter.precheckMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
     }
 
     @Test
@@ -145,16 +161,16 @@ public class QueryResultSizeLimiterTest {
         populatePartitions(partitionsSizes);
         initMocksWithConfiguration(200000, 1);
 
-        limiter.checkMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
+        limiter.precheckMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
     }
 
     @Test(expected = QueryResultSizeExceededException.class)
     public void testLocalPreCheckEnabledWitPartitionOverLimit() {
-        int[] partitionsSizes = {850};
+        int[] partitionsSizes = {1090};
         populatePartitions(partitionsSizes);
         initMocksWithConfiguration(200000, 1);
 
-        limiter.checkMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
+        limiter.precheckMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
     }
 
     @Test
@@ -163,16 +179,16 @@ public class QueryResultSizeLimiterTest {
         populatePartitions(partitionsSizes);
         initMocksWithConfiguration(200000, 2);
 
-        limiter.checkMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
+        limiter.precheckMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
     }
 
     @Test(expected = QueryResultSizeExceededException.class)
     public void testLocalPreCheckEnabledWitTwoPartitionsOverLimit() {
-        int[] partitionsSizes = {849, 850};
+        int[] partitionsSizes = {1062, 1063};
         populatePartitions(partitionsSizes);
         initMocksWithConfiguration(200000, 2);
 
-        limiter.checkMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
+        limiter.precheckMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
     }
 
     @Test
@@ -181,16 +197,16 @@ public class QueryResultSizeLimiterTest {
         populatePartitions(partitionSizes);
         initMocksWithConfiguration(200000, 2);
 
-        limiter.checkMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
+        limiter.precheckMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
     }
 
     @Test(expected = QueryResultSizeExceededException.class)
     public void testLocalPreCheckEnabledWitMorePartitionsThanPreCheckThresholdOverLimit() {
-        int[] partitionSizes = {849, 850, Integer.MIN_VALUE};
+        int[] partitionSizes = {1200, 1000, Integer.MIN_VALUE};
         populatePartitions(partitionSizes);
         initMocksWithConfiguration(200000, 2);
 
-        limiter.checkMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
+        limiter.precheckMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
     }
 
     @Test
@@ -199,16 +215,16 @@ public class QueryResultSizeLimiterTest {
         populatePartitions(partitionSizes);
         initMocksWithConfiguration(200000, 2);
 
-        limiter.checkMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
+        limiter.precheckMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
     }
 
     @Test(expected = QueryResultSizeExceededException.class)
     public void testLocalPreCheckEnabledWitDifferentPartitionSizesOverLimit() {
-        int[] partitionSizes = {0, 1699, Integer.MIN_VALUE};
+        int[] partitionSizes = {0, 2200, Integer.MIN_VALUE};
         populatePartitions(partitionSizes);
         initMocksWithConfiguration(200000, 2);
 
-        limiter.checkMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
+        limiter.precheckMaxResultLimitOnLocalPartitions(ANY_MAP_NAME);
     }
 
     private void initMocksWithConfiguration(int maxResultSizeLimit, int maxLocalPartitionLimitForPreCheck) {

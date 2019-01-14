@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,67 +29,70 @@ import com.hazelcast.multimap.impl.MultiMapService;
 import com.hazelcast.nio.serialization.Data;
 import com.hazelcast.spi.impl.UnmodifiableLazyList;
 import com.hazelcast.transaction.TransactionException;
-import com.hazelcast.util.ThreadUtil;
 
 import java.util.Collection;
 import java.util.List;
 
+import static com.hazelcast.util.ThreadUtil.getThreadId;
+
 /**
  * Proxy implementation of {@link TransactionalMultiMap}
+ *
  * @param <K> key
  * @param <V> value
  */
-public class ClientTxnMultiMapProxy<K, V>
-        extends ClientTxnProxy
-        implements TransactionalMultiMap<K, V> {
+public class ClientTxnMultiMapProxy<K, V> extends ClientTxnProxy implements TransactionalMultiMap<K, V> {
 
     public ClientTxnMultiMapProxy(String name, ClientTransactionContext transactionContext) {
         super(name, transactionContext);
     }
 
-    public boolean put(K key, V value)
-            throws TransactionException {
-
+    @Override
+    public boolean put(K key, V value) throws TransactionException {
         ClientMessage request = TransactionalMultiMapPutCodec
-                .encodeRequest(name, getTransactionId(), ThreadUtil.getThreadId(), toData(key), toData(value));
+                .encodeRequest(name, getTransactionId(), getThreadId(), toData(key), toData(value));
         ClientMessage response = invoke(request);
         return TransactionalMultiMapPutCodec.decodeResponse(response).response;
     }
 
+    @Override
     public Collection<V> get(K key) {
-        ClientMessage request = TransactionalMultiMapGetCodec
-                .encodeRequest(name, getTransactionId(), ThreadUtil.getThreadId(), toData(key));
+        ClientMessage request = TransactionalMultiMapGetCodec.encodeRequest(name, getTransactionId(), getThreadId(), toData(key));
 
         ClientMessage response = invoke(request);
         List<Data> collection = TransactionalMultiMapGetCodec.decodeResponse(response).response;
         return new UnmodifiableLazyList<V>(collection, getSerializationService());
     }
 
+    @Override
     public boolean remove(Object key, Object value) {
         ClientMessage request = TransactionalMultiMapRemoveEntryCodec
-                .encodeRequest(name, getTransactionId(), ThreadUtil.getThreadId(), toData(key), toData(value));
+                .encodeRequest(name, getTransactionId(), getThreadId(), toData(key), toData(value));
         ClientMessage response = invoke(request);
         return TransactionalMultiMapRemoveEntryCodec.decodeResponse(response).response;
     }
 
+    @Override
     public Collection<V> remove(Object key) {
         ClientMessage request = TransactionalMultiMapRemoveCodec
-                .encodeRequest(name, getTransactionId(), ThreadUtil.getThreadId(), toData(key));
+                .encodeRequest(name, getTransactionId(), getThreadId(), toData(key));
         ClientMessage response = invoke(request);
         List<Data> collection = TransactionalMultiMapRemoveCodec.decodeResponse(response).response;
         return new UnmodifiableLazyList<V>(collection, getSerializationService());
     }
 
+    @Override
     public int valueCount(K key) {
         ClientMessage request = TransactionalMultiMapValueCountCodec
-                .encodeRequest(name, getTransactionId(), ThreadUtil.getThreadId(), toData(key));
+                .encodeRequest(name, getTransactionId(), getThreadId(), toData(key));
         ClientMessage response = invoke(request);
         return TransactionalMultiMapValueCountCodec.decodeResponse(response).response;
     }
 
+    @Override
     public int size() {
         ClientMessage request = TransactionalMultiMapSizeCodec
-                .encodeRequest(name, getTransactionId(), ThreadUtil.getThreadId());
+                .encodeRequest(name, getTransactionId(), getThreadId());
         ClientMessage response = invoke(request);
         return TransactionalMultiMapSizeCodec.decodeResponse(response).response;
     }
@@ -99,6 +102,7 @@ public class ClientTxnMultiMapProxy<K, V>
         return MultiMapService.SERVICE_NAME;
     }
 
+    @Override
     void onDestroy() {
     }
 }

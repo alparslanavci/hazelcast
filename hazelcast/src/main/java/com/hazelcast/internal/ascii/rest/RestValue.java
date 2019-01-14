@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,10 @@
 
 package com.hazelcast.internal.ascii.rest;
 
+import com.hazelcast.internal.ascii.TextProtocolsDataSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
-import com.hazelcast.nio.serialization.DataSerializable;
+import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
@@ -26,7 +27,8 @@ import java.io.IOException;
 import static com.hazelcast.util.StringUtil.bytesToString;
 
 @SuppressFBWarnings("EI_EXPOSE_REP")
-public class RestValue implements DataSerializable {
+public class RestValue implements IdentifiedDataSerializable {
+
     private byte[] value;
     private byte[] contentType;
 
@@ -88,5 +90,15 @@ public class RestValue implements DataSerializable {
                 + contentTypeStr
                 + "', " + valueStr
                 + '}';
+    }
+
+    @Override
+    public int getFactoryId() {
+        return TextProtocolsDataSerializerHook.F_ID;
+    }
+
+    @Override
+    public int getId() {
+        return TextProtocolsDataSerializerHook.REST_VALUE;
     }
 }

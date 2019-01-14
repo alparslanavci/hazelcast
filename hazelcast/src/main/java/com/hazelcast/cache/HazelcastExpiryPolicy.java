@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.cache;
 import com.hazelcast.cache.impl.CacheDataSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
+import com.hazelcast.nio.serialization.BinaryInterface;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 
 import javax.cache.expiry.Duration;
@@ -48,6 +49,7 @@ import java.util.concurrent.TimeUnit;
  *
  * @since 3.3.1
  */
+@BinaryInterface
 public class HazelcastExpiryPolicy implements ExpiryPolicy, IdentifiedDataSerializable, Serializable {
 
     private Duration create;

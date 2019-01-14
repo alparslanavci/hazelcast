@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,9 +22,12 @@ import java.util.Collection;
 
 /**
  * Transactional implementation of {@link BaseMultiMap}.
+ * <p>
+ * Supports Quorum {@link com.hazelcast.config.QuorumConfig} since 3.10 in
+ * cluster versions 3.10 and higher.
  *
- * @param <K> key
- * @param <V> value
+ * @param <K> type of the multimap key
+ * @param <V> type of the multimap value
  * @see BaseMultiMap
  * @see MultiMap
  */
@@ -33,31 +36,36 @@ public interface TransactionalMultiMap<K, V> extends BaseMultiMap<K, V>, Transac
     /**
      * {@inheritDoc}
      */
+    @Override
     boolean put(K key, V value);
 
     /**
      * {@inheritDoc}
      */
+    @Override
     Collection<V> get(K key);
 
     /**
      * {@inheritDoc}
      */
+    @Override
     boolean remove(Object key, Object value);
 
     /**
      * {@inheritDoc}
      */
+    @Override
     Collection<V> remove(Object key);
 
     /**
      * {@inheritDoc}
      */
+    @Override
     int valueCount(K key);
 
     /**
      * {@inheritDoc}
      */
+    @Override
     int size();
-
 }

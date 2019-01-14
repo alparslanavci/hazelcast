@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import com.hazelcast.mapreduce.Mapper;
 import com.hazelcast.mapreduce.Reducer;
 import com.hazelcast.mapreduce.ReducerFactory;
 import com.hazelcast.mapreduce.aggregation.Supplier;
+import com.hazelcast.nio.serialization.BinaryInterface;
 
 import java.math.BigDecimal;
 import java.util.Map;
@@ -71,6 +72,7 @@ public class BigDecimalMinAggregation<Key, Value>
      *
      * @param <Key> the key type
      */
+    @BinaryInterface
     static final class BigDecimalMinCombinerFactory<Key>
             extends AbstractAggregationCombinerFactory<Key, BigDecimal, BigDecimal> {
 
@@ -90,6 +92,7 @@ public class BigDecimalMinAggregation<Key, Value>
      *
      * @param <Key> the key type
      */
+    @BinaryInterface
     static final class BigDecimalMinReducerFactory<Key>
             extends AbstractAggregationReducerFactory<Key, BigDecimal, BigDecimal> {
 

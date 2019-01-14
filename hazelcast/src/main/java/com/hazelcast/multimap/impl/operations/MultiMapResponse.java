@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,12 @@
 package com.hazelcast.multimap.impl.operations;
 
 import com.hazelcast.config.MultiMapConfig;
+import com.hazelcast.multimap.impl.MultiMapDataSerializerHook;
 import com.hazelcast.multimap.impl.MultiMapRecord;
 import com.hazelcast.nio.IOUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
-import com.hazelcast.nio.serialization.DataSerializable;
+import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.spi.NodeEngine;
 
 import java.io.IOException;
@@ -30,20 +31,16 @@ import java.util.Collection;
 import static com.hazelcast.multimap.impl.ValueCollectionFactory.createCollection;
 import static com.hazelcast.multimap.impl.ValueCollectionFactory.emptyCollection;
 
-public class MultiMapResponse implements DataSerializable {
-
-    private Collection collection;
+public class MultiMapResponse implements IdentifiedDataSerializable {
 
     private long nextRecordId = -1;
-
-    private MultiMapConfig.ValueCollectionType collectionType
-            = MultiMapConfig.DEFAULT_VALUE_COLLECTION_TYPE;
+    private MultiMapConfig.ValueCollectionType collectionType = MultiMapConfig.DEFAULT_VALUE_COLLECTION_TYPE;
+    private Collection collection;
 
     public MultiMapResponse() {
     }
 
-    public MultiMapResponse(Collection collection,
-                            MultiMapConfig.ValueCollectionType collectionType) {
+    public MultiMapResponse(Collection collection, MultiMapConfig.ValueCollectionType collectionType) {
         this.collection = collection;
         this.collectionType = collectionType;
     }
@@ -57,7 +54,6 @@ public class MultiMapResponse implements DataSerializable {
         return this;
     }
 
-
     public Collection getCollection() {
         return collection == null ? emptyCollection(collectionType) : collection;
     }
@@ -66,7 +62,7 @@ public class MultiMapResponse implements DataSerializable {
         if (collection == null) {
             return emptyCollection(collectionType);
         }
-        final Collection newCollection = createCollection(collectionType, collection.size());
+        Collection<Object> newCollection = createCollection(collectionType, collection.size());
         for (Object obj : collection) {
             MultiMapRecord record = nodeEngine.toObject(obj);
             newCollection.add(nodeEngine.toObject(record.getObject()));
@@ -78,8 +74,7 @@ public class MultiMapResponse implements DataSerializable {
         if (collection == null) {
             return emptyCollection(collectionType);
         }
-        final Collection<MultiMapRecord> newCollection
-                = createCollection(collectionType, collection.size());
+        Collection<MultiMapRecord> newCollection = createCollection(collectionType, collection.size());
         for (Object obj : collection) {
             MultiMapRecord record = nodeEngine.toObject(obj);
             newCollection.add(record);
@@ -115,5 +110,15 @@ public class MultiMapResponse implements DataSerializable {
         for (int i = 0; i < size; i++) {
             collection.add(IOUtil.readObject(in));
         }
+    }
+
+    @Override
+    public int getFactoryId() {
+        return MultiMapDataSerializerHook.F_ID;
+    }
+
+    @Override
+    public int getId() {
+        return MultiMapDataSerializerHook.MULTIMAP_RESPONSE;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.hazelcast.client.impl.protocol.task.map;
 
-import com.hazelcast.client.ClientEndpoint;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.task.AbstractCallableMessageTask;
 import com.hazelcast.core.EntryEvent;
@@ -44,7 +43,6 @@ public abstract class AbstractMapAddEntryListenerMessageTask<Parameter>
 
     @Override
     protected Object call() {
-        final ClientEndpoint endpoint = getEndpoint();
         final MapService mapService = getService(MapService.SERVICE_NAME);
 
         Object listener = newMapListener();
@@ -88,31 +86,34 @@ public abstract class AbstractMapAddEntryListenerMessageTask<Parameter>
 
         @Override
         public void onEntryEvent(EntryEvent<Object, Object> event) {
-            if (endpoint.isAlive()) {
-                if (!(event instanceof DataAwareEntryEvent)) {
-                    throw new IllegalArgumentException(
-                            "Expecting: DataAwareEntryEvent, Found: " + event.getClass().getSimpleName());
-                }
-                DataAwareEntryEvent dataAwareEntryEvent = (DataAwareEntryEvent) event;
-                Data keyData = dataAwareEntryEvent.getKeyData();
-                Data newValueData = dataAwareEntryEvent.getNewValueData();
-                Data oldValueData = dataAwareEntryEvent.getOldValueData();
-                Data meringValueData = dataAwareEntryEvent.getMergingValueData();
-                sendClientMessage(keyData, encodeEvent(keyData
-                        , newValueData, oldValueData, meringValueData, event.getEventType().getType(),
-                        event.getMember().getUuid(), 1));
+            if (!endpoint.isAlive()) {
+                return;
             }
+            if (!(event instanceof DataAwareEntryEvent)) {
+                throw new IllegalArgumentException(
+                        "Expecting: DataAwareEntryEvent, Found: " + event.getClass().getSimpleName());
+            }
+            DataAwareEntryEvent dataAwareEntryEvent = (DataAwareEntryEvent) event;
+            Data keyData = dataAwareEntryEvent.getKeyData();
+            Data newValueData = dataAwareEntryEvent.getNewValueData();
+            Data oldValueData = dataAwareEntryEvent.getOldValueData();
+            Data meringValueData = dataAwareEntryEvent.getMergingValueData();
+            sendClientMessage(keyData, encodeEvent(keyData
+                    , newValueData, oldValueData, meringValueData, event.getEventType().getType(),
+                    event.getMember().getUuid(), 1));
+
         }
 
         @Override
         public void onMapEvent(MapEvent event) {
-            if (endpoint.isAlive()) {
-                final EntryEventType type = event.getEventType();
-                final String uuid = event.getMember().getUuid();
-                int numberOfEntriesAffected = event.getNumberOfEntriesAffected();
-                sendClientMessage(null, encodeEvent(null,
-                        null, null, null, type.getType(), uuid, numberOfEntriesAffected));
+            if (!endpoint.isAlive()) {
+                return;
             }
+            EntryEventType type = event.getEventType();
+            String uuid = event.getMember().getUuid();
+            int numberOfEntriesAffected = event.getNumberOfEntriesAffected();
+            sendClientMessage(null, encodeEvent(null,
+                    null, null, null, type.getType(), uuid, numberOfEntriesAffected));
         }
     }
 

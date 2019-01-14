@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,18 +20,25 @@ import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.HazelcastInstanceAware;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
+import com.hazelcast.nio.serialization.BinaryInterface;
 import com.hazelcast.nio.serialization.DataSerializable;
 
 import java.io.IOException;
 import java.util.concurrent.Callable;
 
 /**
- * Echoes to screen
+ * Echoes to screen.
  */
+@BinaryInterface
 public class Echo implements Callable<String>, DataSerializable, HazelcastInstanceAware {
 
     String input;
+
     private transient HazelcastInstance hz;
+
+    public Echo() {
+        // no-arg constructor needed for DataSerializable classes
+    }
 
     public Echo(String input) {
         this.input = input;

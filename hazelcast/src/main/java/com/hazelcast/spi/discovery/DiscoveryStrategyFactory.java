@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package com.hazelcast.spi.discovery;
 import com.hazelcast.config.properties.PropertyDefinition;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.logging.ILogger;
-import com.hazelcast.spi.annotation.Beta;
 
 import java.util.Collection;
 import java.util.Map;
@@ -43,7 +42,6 @@ import java.util.Map;
  *
  * @since 3.6
  */
-@Beta
 public interface DiscoveryStrategyFactory {
 
     /**

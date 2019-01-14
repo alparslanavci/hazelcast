@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,14 @@
 
 package com.hazelcast.map.impl.record;
 
+import com.hazelcast.map.impl.MapDataSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.Data;
-import com.hazelcast.nio.serialization.DataSerializable;
 
 import java.io.IOException;
 
-public class RecordReplicationInfo extends RecordInfo implements DataSerializable {
+public class RecordReplicationInfo extends RecordInfo {
 
     private Data key;
     private Data value;
@@ -66,5 +66,10 @@ public class RecordReplicationInfo extends RecordInfo implements DataSerializabl
                 + "key=" + key
                 + ", value=" + value
                 + "} " + super.toString();
+    }
+
+    @Override
+    public int getId() {
+        return MapDataSerializerHook.RECORD_REPLICATION_INFO;
     }
 }

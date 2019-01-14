@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,10 @@
 package com.hazelcast.client.impl;
 
 import com.hazelcast.cache.impl.JCacheDetector;
-import com.hazelcast.client.ClientEndpoint;
-import com.hazelcast.client.ClientEndpointManager;
-import com.hazelcast.client.ClientEngine;
-import com.hazelcast.client.ClientEvent;
-import com.hazelcast.client.ClientEventType;
 import com.hazelcast.client.impl.operations.ClientDisconnectionOperation;
 import com.hazelcast.client.impl.operations.GetConnectedClientsOperation;
-import com.hazelcast.client.impl.operations.PostJoinClientOperation;
-import com.hazelcast.client.impl.protocol.ClientExceptionFactory;
+import com.hazelcast.client.impl.operations.OnJoinClientOperation;
+import com.hazelcast.client.impl.protocol.ClientExceptions;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.MessageTaskFactory;
 import com.hazelcast.client.impl.protocol.task.AuthenticationCustomCredentialsMessageTask;
@@ -33,6 +28,7 @@ import com.hazelcast.client.impl.protocol.task.AuthenticationMessageTask;
 import com.hazelcast.client.impl.protocol.task.GetPartitionsMessageTask;
 import com.hazelcast.client.impl.protocol.task.MessageTask;
 import com.hazelcast.client.impl.protocol.task.PingMessageTask;
+import com.hazelcast.client.impl.protocol.task.map.AbstractMapQueryMessageTask;
 import com.hazelcast.config.Config;
 import com.hazelcast.core.Client;
 import com.hazelcast.core.ClientListener;
@@ -41,6 +37,7 @@ import com.hazelcast.core.Member;
 import com.hazelcast.instance.MemberImpl;
 import com.hazelcast.instance.Node;
 import com.hazelcast.internal.cluster.ClusterService;
+import com.hazelcast.internal.util.RuntimeAvailableProcessors;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.nio.Address;
 import com.hazelcast.nio.Connection;
@@ -49,7 +46,6 @@ import com.hazelcast.nio.tcp.TcpIpConnection;
 import com.hazelcast.security.SecurityContext;
 import com.hazelcast.spi.CoreService;
 import com.hazelcast.spi.EventPublishingService;
-import com.hazelcast.spi.EventRegistration;
 import com.hazelcast.spi.EventService;
 import com.hazelcast.spi.ExecutionService;
 import com.hazelcast.spi.ManagedService;
@@ -59,38 +55,47 @@ import com.hazelcast.spi.MembershipServiceEvent;
 import com.hazelcast.spi.NodeEngine;
 import com.hazelcast.spi.Operation;
 import com.hazelcast.spi.OperationService;
-import com.hazelcast.spi.PostJoinAwareService;
+import com.hazelcast.spi.PreJoinAwareService;
 import com.hazelcast.spi.ProxyService;
 import com.hazelcast.spi.UrgentSystemOperation;
 import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.impl.PartitionSpecificRunnable;
+import com.hazelcast.spi.impl.executionservice.InternalExecutionService;
 import com.hazelcast.spi.impl.operationservice.InternalOperationService;
 import com.hazelcast.spi.partition.IPartitionService;
 import com.hazelcast.spi.properties.GroupProperty;
 import com.hazelcast.spi.serialization.SerializationService;
 import com.hazelcast.transaction.TransactionManagerService;
+import com.hazelcast.util.ConcurrencyUtil;
+import com.hazelcast.util.ConstructorFunction;
 import com.hazelcast.util.executor.ExecutorType;
 
 import javax.security.auth.login.LoginException;
+import java.net.InetSocketAddress;
 import java.util.Collection;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
-import static com.hazelcast.spi.impl.OperationResponseHandlerFactory.createEmptyResponseHandler;
+import static com.hazelcast.spi.ExecutionService.CLIENT_MANAGEMENT_EXECUTOR;
+import static com.hazelcast.util.SetUtil.createHashSet;
 
 /**
  * Class that requests, listeners from client handled in node side.
  */
-public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwareService,
+@SuppressWarnings("checkstyle:classdataabstractioncoupling")
+public class ClientEngineImpl implements ClientEngine, CoreService, PreJoinAwareService,
         ManagedService, MembershipAwareService, EventPublishingService<ClientEvent, ClientListener> {
 
     /**
@@ -98,55 +103,94 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
      */
     public static final String SERVICE_NAME = "hz:core:clientEngine";
 
-    private static final int ENDPOINT_REMOVE_DELAY_SECONDS = 10;
     private static final int EXECUTOR_QUEUE_CAPACITY_PER_CORE = 100000;
     private static final int THREADS_PER_CORE = 20;
-
+    private static final int QUERY_THREADS_PER_CORE = 1;
+    private static final ConstructorFunction<String, AtomicLong> LAST_AUTH_CORRELATION_ID_CONSTRUCTOR_FUNC =
+            new ConstructorFunction<String, AtomicLong>() {
+                @Override
+                public AtomicLong createNew(String arg) {
+                    return new AtomicLong();
+                }
+            };
     private final Node node;
     private final NodeEngineImpl nodeEngine;
     private final Executor executor;
+    private final ExecutorService clientManagementExecutor;
+    private final Executor queryExecutor;
 
     private final SerializationService serializationService;
-    // client uuid -> member uuid
+    // client UUID -> member UUID
     private final ConcurrentMap<String, String> ownershipMappings = new ConcurrentHashMap<String, String>();
+    // client UUID -> last authentication correlation ID
+    private final ConcurrentMap<String, AtomicLong> lastAuthenticationCorrelationIds
+            = new ConcurrentHashMap<String, AtomicLong>();
 
     private final ClientEndpointManagerImpl endpointManager;
     private final ILogger logger;
     private final ConnectionListener connectionListener = new ConnectionListenerImpl();
 
     private final MessageTaskFactory messageTaskFactory;
-    private final ClientExceptionFactory clientExceptionFactory;
+    private final ClientExceptions clientExceptions;
+    private final int endpointRemoveDelaySeconds;
+    private final ClientPartitionListenerService partitionListenerService;
 
     public ClientEngineImpl(Node node) {
         this.logger = node.getLogger(ClientEngine.class);
         this.node = node;
         this.serializationService = node.getSerializationService();
         this.nodeEngine = node.nodeEngine;
-        this.endpointManager = new ClientEndpointManagerImpl(this, nodeEngine);
-        this.executor = newExecutor();
-        this.messageTaskFactory = new CompositeMessageTaskFactory(this.nodeEngine);
-        this.clientExceptionFactory = initClientExceptionFactory();
-
-        ClientHeartbeatMonitor heartbeatMonitor = new ClientHeartbeatMonitor(
-                endpointManager, this, nodeEngine.getExecutionService(), node.getProperties());
-        heartbeatMonitor.start();
+        this.endpointManager = new ClientEndpointManagerImpl(nodeEngine);
+        this.executor = newClientExecutor();
+        this.queryExecutor = newClientQueryExecutor();
+        this.clientManagementExecutor = newClientsManagementExecutor();
+        this.messageTaskFactory = new CompositeMessageTaskFactory(nodeEngine);
+        this.clientExceptions = initClientExceptionFactory();
+        this.endpointRemoveDelaySeconds = node.getProperties().getInteger(GroupProperty.CLIENT_ENDPOINT_REMOVE_DELAY_SECONDS);
+        this.partitionListenerService = new ClientPartitionListenerService(nodeEngine);
     }
 
-    private ClientExceptionFactory initClientExceptionFactory() {
-        boolean jcacheAvailable = JCacheDetector.isJcacheAvailable(nodeEngine.getConfigClassLoader());
-        return new ClientExceptionFactory(jcacheAvailable);
+    private ClientExceptions initClientExceptionFactory() {
+        boolean jcacheAvailable = JCacheDetector.isJCacheAvailable(nodeEngine.getConfigClassLoader());
+        return new ClientExceptions(jcacheAvailable);
     }
 
-    private Executor newExecutor() {
+    private ExecutorService newClientsManagementExecutor() {
+        //CLIENT_MANAGEMENT_EXECUTOR is a single threaded executor to ensure that disconnect/auth are executed in correct order.
+        InternalExecutionService executionService = nodeEngine.getExecutionService();
+        return executionService.register(CLIENT_MANAGEMENT_EXECUTOR, 1, Integer.MAX_VALUE, ExecutorType.CACHED);
+    }
+
+    public ExecutorService getClientManagementExecutor() {
+        return clientManagementExecutor;
+    }
+
+    private Executor newClientExecutor() {
         final ExecutionService executionService = nodeEngine.getExecutionService();
-        int coreSize = Runtime.getRuntime().availableProcessors();
+        int coreSize = RuntimeAvailableProcessors.get();
 
         int threadCount = node.getProperties().getInteger(GroupProperty.CLIENT_ENGINE_THREAD_COUNT);
         if (threadCount <= 0) {
             threadCount = coreSize * THREADS_PER_CORE;
         }
+        logger.finest("Creating new client executor with threadCount=" + threadCount);
 
         return executionService.register(ExecutionService.CLIENT_EXECUTOR,
+                threadCount, coreSize * EXECUTOR_QUEUE_CAPACITY_PER_CORE,
+                ExecutorType.CONCRETE);
+    }
+
+    private Executor newClientQueryExecutor() {
+        final ExecutionService executionService = nodeEngine.getExecutionService();
+        int coreSize = RuntimeAvailableProcessors.get();
+
+        int threadCount = node.getProperties().getInteger(GroupProperty.CLIENT_ENGINE_QUERY_THREAD_COUNT);
+        if (threadCount <= 0) {
+            threadCount = coreSize * QUERY_THREADS_PER_CORE;
+        }
+        logger.finest("Creating new client query executor with threadCount=" + threadCount);
+
+        return executionService.register(ExecutionService.CLIENT_QUERY_EXECUTOR,
                 threadCount, coreSize * EXECUTOR_QUEUE_CAPACITY_PER_CORE,
                 ExecutorType.CONCRETE);
     }
@@ -166,13 +210,17 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
         return endpointManager.size();
     }
 
-    public void handleClientMessage(ClientMessage clientMessage, Connection connection) {
+    @Override
+    public void accept(ClientMessage clientMessage) {
         int partitionId = clientMessage.getPartitionId();
+        Connection connection = clientMessage.getConnection();
         MessageTask messageTask = messageTaskFactory.create(clientMessage, connection);
         InternalOperationService operationService = nodeEngine.getOperationService();
         if (partitionId < 0) {
             if (isUrgent(messageTask)) {
                 operationService.execute(new PriorityPartitionSpecificRunnable(messageTask));
+            } else if (isQuery(messageTask)) {
+                queryExecutor.execute(messageTask);
             } else {
                 executor.execute(messageTask);
             }
@@ -188,6 +236,10 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
                 || clazz == AuthenticationMessageTask.class
                 || clazz == AuthenticationCustomCredentialsMessageTask.class
                 ;
+    }
+
+    private boolean isQuery(MessageTask messageTask) {
+        return messageTask instanceof AbstractMapQueryMessageTask;
     }
 
     @Override
@@ -221,6 +273,11 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
     }
 
     @Override
+    public String getThisUuid() {
+        return node.getThisUuid();
+    }
+
+    @Override
     public MemberImpl getLocalMember() {
         return node.getLocalMember();
     }
@@ -239,8 +296,8 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
         return endpointManager;
     }
 
-    public ClientExceptionFactory getClientExceptionFactory() {
-        return clientExceptionFactory;
+    public ClientExceptions getClientExceptions() {
+        return clientExceptions;
     }
 
     @Override
@@ -251,21 +308,13 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
     public void bind(final ClientEndpoint endpoint) {
         final Connection conn = endpoint.getConnection();
         if (conn instanceof TcpIpConnection) {
-            Address address = new Address(conn.getRemoteSocketAddress());
-            ((TcpIpConnection) conn).setEndPoint(address);
+            InetSocketAddress socketAddress = conn.getRemoteSocketAddress();
+            //socket address can be null if connection closed before bind
+            if (socketAddress != null) {
+                Address address = new Address(socketAddress);
+                ((TcpIpConnection) conn).setEndPoint(address);
+            }
         }
-        ClientEvent event = new ClientEvent(endpoint.getUuid(),
-                ClientEventType.CONNECTED,
-                endpoint.getSocketAddress(),
-                endpoint.getClientType());
-        sendClientEvent(event);
-    }
-
-    void sendClientEvent(ClientEvent event) {
-        final EventService eventService = nodeEngine.getEventService();
-        final Collection<EventRegistration> regs = eventService.getRegistrations(SERVICE_NAME, SERVICE_NAME);
-        String uuid = event.getUuid();
-        eventService.publishEvent(SERVICE_NAME, regs, event, uuid.hashCode());
     }
 
     @Override
@@ -290,8 +339,7 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
         final String deadMemberUuid = event.getMember().getUuid();
         try {
             nodeEngine.getExecutionService().schedule(new DestroyEndpointTask(deadMemberUuid),
-                    ENDPOINT_REMOVE_DELAY_SECONDS, TimeUnit.SECONDS);
-
+                    endpointRemoveDelaySeconds, TimeUnit.SECONDS);
         } catch (RejectedExecutionException e) {
             if (logger.isFinestEnabled()) {
                 logger.finest(e);
@@ -304,9 +352,10 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
     }
 
     public Collection<Client> getClients() {
-        final HashSet<Client> clients = new HashSet<Client>();
-        for (ClientEndpoint endpoint : endpointManager.getEndpoints()) {
-            clients.add((Client) endpoint);
+        final Collection<ClientEndpoint> endpoints = endpointManager.getEndpoints();
+        final Set<Client> clients = createHashSet(endpoints.size());
+        for (ClientEndpoint endpoint : endpoints) {
+            clients.add(endpoint);
         }
         return clients;
     }
@@ -314,14 +363,23 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
     @Override
     public void init(NodeEngine nodeEngine, Properties properties) {
         node.getConnectionManager().addConnectionListener(connectionListener);
+
+        ClientHeartbeatMonitor heartbeatMonitor = new ClientHeartbeatMonitor(
+                endpointManager, getLogger(ClientHeartbeatMonitor.class), nodeEngine.getExecutionService(), node.getProperties());
+        heartbeatMonitor.start();
     }
 
     @Override
     public void reset() {
+        clear("Resetting clientEngine");
     }
 
     @Override
     public void shutdown(boolean terminate) {
+        clear("Shutting down clientEngine");
+    }
+
+    private void clear(String reason) {
         for (ClientEndpoint ce : endpointManager.getEndpoints()) {
             ClientEndpointImpl endpoint = (ClientEndpointImpl) ce;
             try {
@@ -332,7 +390,7 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
             try {
                 final Connection conn = endpoint.getConnection();
                 if (conn.isAlive()) {
-                    conn.close("Shutdown of ClientEngine", null);
+                    conn.close(reason, null);
                 }
             } catch (Exception e) {
                 logger.finest(e);
@@ -342,16 +400,32 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
         ownershipMappings.clear();
     }
 
-    public void addOwnershipMapping(String clientUuid, String ownerUuid) {
-        ownershipMappings.put(clientUuid, ownerUuid);
+    public boolean trySetLastAuthenticationCorrelationId(String clientUuid, long newCorrelationId) {
+        AtomicLong lastCorrelationId = ConcurrencyUtil.getOrPutIfAbsent(lastAuthenticationCorrelationIds,
+                clientUuid,
+                LAST_AUTH_CORRELATION_ID_CONSTRUCTOR_FUNC);
+        return ConcurrencyUtil.setIfEqualOrGreaterThan(lastCorrelationId, newCorrelationId);
     }
 
-    public void removeOwnershipMapping(String clientUuid) {
-        ownershipMappings.remove(clientUuid);
+    public String addOwnershipMapping(String clientUuid, String ownerUuid) {
+        return ownershipMappings.put(clientUuid, ownerUuid);
+    }
+
+    public boolean removeOwnershipMapping(String clientUuid, String memberUuid) {
+        lastAuthenticationCorrelationIds.remove(clientUuid);
+        return ownershipMappings.remove(clientUuid, memberUuid);
+    }
+
+    public String getOwnerUuid(String clientUuid) {
+        return ownershipMappings.get(clientUuid);
     }
 
     public TransactionManagerService getTransactionManagerService() {
         return node.nodeEngine.getTransactionManagerService();
+    }
+
+    public ClientPartitionListenerService getPartitionListenerService() {
+        return partitionListenerService;
     }
 
     private final class ConnectionListenerImpl implements ConnectionListener {
@@ -365,93 +439,112 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
 
         @Override
         public void connectionRemoved(Connection connection) {
-            if (connection.isClient() && nodeEngine.isRunning()) {
-                ClientEndpointImpl endpoint = (ClientEndpointImpl) endpointManager.getEndpoint(connection);
-                if (endpoint == null) {
-                    return;
-                }
+            if (!connection.isClient() || !nodeEngine.isRunning()) {
+                return;
+            }
+            final ClientEndpointImpl endpoint = (ClientEndpointImpl) endpointManager.getEndpoint(connection);
+            if (endpoint == null) {
+                logger.finest("connectionRemoved: No endpoint for connection:" + connection);
+                return;
+            }
 
-                if (!endpoint.isFirstConnection()) {
-                    return;
-                }
+            endpointManager.removeEndpoint(endpoint);
 
-                String localMemberUuid = node.getLocalMember().getUuid();
-                String ownerUuid = endpoint.getPrincipal().getOwnerUuid();
-                if (localMemberUuid.equals(ownerUuid)) {
-                    callDisconnectionOperation(endpoint);
+            if (!endpoint.isOwnerConnection()) {
+                logger.finest("connectionRemoved: Not the owner conn:" + connection + " for endpoint " + endpoint);
+                return;
+            }
+
+            String localMemberUuid = node.getThisUuid();
+            final String clientUuid = endpoint.getUuid();
+            String ownerUuid = ownershipMappings.get(clientUuid);
+            if (localMemberUuid.equals(ownerUuid)) {
+                final long authenticationCorrelationId = endpoint.getAuthenticationCorrelationId();
+                try {
+                    nodeEngine.getExecutionService().schedule(new Runnable() {
+                        @Override
+                        public void run() {
+                            callDisconnectionOperation(clientUuid, authenticationCorrelationId);
+                        }
+                    }, endpointRemoveDelaySeconds, TimeUnit.SECONDS);
+                } catch (RejectedExecutionException e) {
+                    if (logger.isFinestEnabled()) {
+                        logger.finest(e);
+                    }
                 }
             }
         }
 
-        private void callDisconnectionOperation(ClientEndpointImpl endpoint) {
+        private void callDisconnectionOperation(String clientUuid, long authenticationCorrelationId) {
             Collection<Member> memberList = nodeEngine.getClusterService().getMembers();
             OperationService operationService = nodeEngine.getOperationService();
-            ClientDisconnectionOperation op = createClientDisconnectionOperation(endpoint.getUuid());
-            operationService.run(op);
+            String memberUuid = getLocalMember().getUuid();
+
+            String ownerMember = ownershipMappings.get(clientUuid);
+            if (!memberUuid.equals(ownerMember)) {
+                // do nothing if the owner already changed (double checked locking)
+                return;
+            }
+
+            if (lastAuthenticationCorrelationIds.get(clientUuid).get() > authenticationCorrelationId) {
+                //a new authentication already made for that client. This check is needed to detect
+                // "a disconnected client is reconnected back to same node"
+                return;
+            }
 
             for (Member member : memberList) {
-                if (!member.localMember()) {
-                    op = createClientDisconnectionOperation(endpoint.getUuid());
-                    operationService.send(op, member.getAddress());
-                }
+                ClientDisconnectionOperation op = new ClientDisconnectionOperation(clientUuid, memberUuid);
+                operationService.createInvocationBuilder(SERVICE_NAME, op, member.getAddress()).invoke();
             }
         }
-    }
-
-    private ClientDisconnectionOperation createClientDisconnectionOperation(String clientUuid) {
-        ClientDisconnectionOperation op = new ClientDisconnectionOperation(clientUuid);
-        op.setNodeEngine(nodeEngine)
-                .setServiceName(SERVICE_NAME)
-                .setService(this)
-                .setOperationResponseHandler(createEmptyResponseHandler());
-        return op;
     }
 
     private class DestroyEndpointTask implements Runnable {
         private final String deadMemberUuid;
 
-        public DestroyEndpointTask(String deadMemberUuid) {
+        DestroyEndpointTask(String deadMemberUuid) {
             this.deadMemberUuid = deadMemberUuid;
         }
 
         @Override
         public void run() {
-            endpointManager.removeEndpoints(deadMemberUuid);
-            removeMappings();
-        }
-
-        void removeMappings() {
-            Iterator<Map.Entry<String, String>> iterator = ownershipMappings.entrySet().iterator();
-            while (iterator.hasNext()) {
-                Map.Entry<String, String> entry = iterator.next();
+            InternalOperationService service = nodeEngine.getOperationService();
+            Address thisAddr = getLocalMember().getAddress();
+            for (Map.Entry<String, String> entry : ownershipMappings.entrySet()) {
                 String clientUuid = entry.getKey();
                 String memberUuid = entry.getValue();
                 if (deadMemberUuid.equals(memberUuid)) {
-                    iterator.remove();
-                    ClientDisconnectionOperation op = createClientDisconnectionOperation(clientUuid);
-                    nodeEngine.getOperationService().run(op);
+                    ClientDisconnectionOperation op = new ClientDisconnectionOperation(clientUuid, memberUuid);
+                    service.createInvocationBuilder(ClientEngineImpl.SERVICE_NAME, op, thisAddr).invoke();
                 }
             }
         }
     }
 
     @Override
-    public Operation getPostJoinOperation() {
-        return ownershipMappings.isEmpty() ? null : new PostJoinClientOperation(ownershipMappings);
+    public Operation getPreJoinOperation() {
+        Set<Member> members = nodeEngine.getClusterService().getMembers();
+        HashSet<String> liveMemberUUIDs = new HashSet<String>();
+        for (Member member : members) {
+            liveMemberUUIDs.add(member.getUuid());
+        }
+        Map<String, String> liveMappings = new HashMap<String, String>(ownershipMappings);
+        liveMappings.values().retainAll(liveMemberUUIDs);
+        return liveMappings.isEmpty() ? null : new OnJoinClientOperation(liveMappings);
     }
 
+    @SuppressWarnings("checkstyle:methodlength")
     @Override
     public Map<ClientType, Integer> getConnectedClientStats() {
-
         int numberOfCppClients = 0;
         int numberOfDotNetClients = 0;
         int numberOfJavaClients = 0;
         int numberOfNodeJSClients = 0;
         int numberOfPythonClients = 0;
+        int numberOfGoClients = 0;
         int numberOfOtherClients = 0;
 
         OperationService operationService = node.nodeEngine.getOperationService();
-        Map<ClientType, Integer> resultMap = new HashMap<ClientType, Integer>();
         Map<String, ClientType> clientsMap = new HashMap<String, ClientType>();
 
         for (Member member : node.getClusterService().getMembers()) {
@@ -464,7 +557,7 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
                 if (endpoints == null) {
                     continue;
                 }
-                //Merge connected clients according to their uuid.
+                //Merge connected clients according to their UUID
                 for (Map.Entry<String, ClientType> entry : endpoints.entrySet()) {
                     clientsMap.put(entry.getKey(), entry.getValue());
                 }
@@ -491,19 +584,38 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
                 case PYTHON:
                     numberOfPythonClients++;
                     break;
+                case GO:
+                    numberOfGoClients++;
+                    break;
                 default:
                     numberOfOtherClients++;
             }
         }
+
+        final Map<ClientType, Integer> resultMap = new EnumMap<ClientType, Integer>(ClientType.class);
 
         resultMap.put(ClientType.CPP, numberOfCppClients);
         resultMap.put(ClientType.CSHARP, numberOfDotNetClients);
         resultMap.put(ClientType.JAVA, numberOfJavaClients);
         resultMap.put(ClientType.NODEJS, numberOfNodeJSClients);
         resultMap.put(ClientType.PYTHON, numberOfPythonClients);
+        resultMap.put(ClientType.GO, numberOfGoClients);
         resultMap.put(ClientType.OTHER, numberOfOtherClients);
 
         return resultMap;
+    }
+
+    @Override
+    public Map<String, String> getClientStatistics() {
+        Collection<ClientEndpoint> clientEndpoints = endpointManager.getEndpoints();
+        Map<String, String> statsMap = new HashMap<String, String>(clientEndpoints.size());
+        for (ClientEndpoint e : clientEndpoints) {
+            String statistics = e.getClientStatistics();
+            if (null != statistics) {
+                statsMap.put(e.getUuid(), statistics);
+            }
+        }
+        return statsMap;
     }
 
     private static class PriorityPartitionSpecificRunnable implements PartitionSpecificRunnable, UrgentSystemOperation {
@@ -522,6 +634,11 @@ public class ClientEngineImpl implements ClientEngine, CoreService, PostJoinAwar
         @Override
         public int getPartitionId() {
             return task.getPartitionId();
+        }
+
+        @Override
+        public String toString() {
+            return "PriorityPartitionSpecificRunnable:{ " + task + "}";
         }
     }
 }

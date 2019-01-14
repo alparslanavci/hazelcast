@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.hazelcast.mapreduce.aggregation.Supplier;
 import com.hazelcast.mapreduce.impl.task.DefaultContext;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
+import com.hazelcast.nio.serialization.BinaryInterface;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -35,6 +36,7 @@ import java.io.IOException;
  * @param <ValueOut> the output value type
  */
 @SuppressFBWarnings("SE_NO_SERIALVERSIONID")
+@BinaryInterface
 class SupplierConsumingMapper<Key, ValueIn, ValueOut>
         implements Mapper<Key, ValueIn, Key, ValueOut>, IdentifiedDataSerializable {
 

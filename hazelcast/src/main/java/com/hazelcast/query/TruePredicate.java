@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,27 +18,33 @@ package com.hazelcast.query;
 
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
+import com.hazelcast.nio.serialization.BinaryInterface;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.query.impl.predicates.PredicateDataSerializerHook;
 
 import java.io.IOException;
 import java.util.Map;
 
-import static com.hazelcast.internal.serialization.impl.FactoryIdHelper.PREDICATE_DS_FACTORY_ID;
-
 /**
  * A {@link com.hazelcast.query.Predicate} which always returns true.
+ *
+ * @param <K> map key type
+ * @param <V> map value type
  */
-public class TruePredicate implements IdentifiedDataSerializable, Predicate {
-
-    //reminder:
-    //when TruePredicate is going to implement IdentifiedDataSerializable, make sure no new instance
-    // is created, but the INSTANCE is returned. No need to create new objects.
+@BinaryInterface
+public class TruePredicate<K, V> implements IdentifiedDataSerializable, Predicate<K, V> {
 
     /**
      * An instance of the TruePredicate.
      */
     public static final TruePredicate INSTANCE = new TruePredicate();
+
+    private static final long serialVersionUID = 1L;
+
+    @SuppressWarnings("unchecked")
+    public static <K, V> TruePredicate<K, V> truePredicate() {
+        return INSTANCE;
+    }
 
     @Override
     public void writeData(ObjectDataOutput out) throws IOException {
@@ -60,11 +66,25 @@ public class TruePredicate implements IdentifiedDataSerializable, Predicate {
 
     @Override
     public int getFactoryId() {
-        return PREDICATE_DS_FACTORY_ID;
+        return PredicateDataSerializerHook.F_ID;
     }
 
     @Override
     public int getId() {
         return PredicateDataSerializerHook.TRUE_PREDICATE;
     }
+
+    @Override
+    public boolean equals(Object o) {
+        if (o == null || !(o instanceof TruePredicate)) {
+            return false;
+        }
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
+    }
+
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import com.hazelcast.transaction.TransactionTimedOutException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -39,6 +40,7 @@ import java.util.logging.Level;
  * futures at the same time, e.g.
  * {@link #waitWithDeadline(java.util.Collection, long, java.util.concurrent.TimeUnit, long, java.util.concurrent.TimeUnit)}
  */
+@SuppressWarnings("checkstyle:methodcount")
 public final class FutureUtil {
 
     /**
@@ -87,6 +89,23 @@ public final class FutureUtil {
                     LOGGER.finest("Member left while waiting for futures...", throwable);
                 }
             } else if (throwable instanceof ExecutionException) {
+                throw new HazelcastException(throwable);
+            }
+        }
+    };
+
+    /**
+     * This ExceptionHandler rethrows {@link java.util.concurrent.ExecutionException}s and logs
+     * {@link com.hazelcast.core.MemberLeftException}s to the log.
+     */
+    public static final ExceptionHandler RETHROW_ALL_EXCEPT_MEMBER_LEFT = new ExceptionHandler() {
+        @Override
+        public void handleException(Throwable throwable) {
+            if (throwable instanceof MemberLeftException) {
+                if (LOGGER.isFinestEnabled()) {
+                    LOGGER.finest("Member left while waiting for futures...", throwable);
+                }
+            } else {
                 throw new HazelcastException(throwable);
             }
         }
@@ -259,12 +278,39 @@ public final class FutureUtil {
     }
 
     @PrivateApi
-    public static void waitWithDeadline(Collection<Future> futures, long timeout, TimeUnit timeUnit) {
+    public static void waitForever(Collection<? extends Future> futuresToWaitFor, ExceptionHandler exceptionHandler) {
+        Collection<Future> futures = new ArrayList<Future>(futuresToWaitFor);
+        while (true) {
+            Iterator<Future> it = futures.iterator();
+            while (it.hasNext()) {
+                Future future = it.next();
+                try {
+                    future.get();
+                } catch (Exception e) {
+                    exceptionHandler.handleException(e);
+                }
+                if (future.isDone() || future.isCancelled()) {
+                    it.remove();
+                }
+            }
+            if (futures.isEmpty()) {
+                return;
+            }
+        }
+    }
+
+    @PrivateApi
+    public static void waitForever(Collection<? extends Future> futures) {
+        waitForever(futures, IGNORE_ALL_EXCEPT_LOG_MEMBER_LEFT);
+    }
+
+    @PrivateApi
+    public static void waitWithDeadline(Collection<? extends Future> futures, long timeout, TimeUnit timeUnit) {
         waitWithDeadline(futures, timeout, timeUnit, IGNORE_ALL_EXCEPT_LOG_MEMBER_LEFT);
     }
 
     @PrivateApi
-    public static void waitUntilAllRespondedWithDeadline(Collection<Future> futures, long timeout, TimeUnit timeUnit,
+    public static void waitUntilAllRespondedWithDeadline(Collection<? extends Future> futures, long timeout, TimeUnit timeUnit,
                                                          ExceptionHandler exceptionHandler) {
         CollectAllExceptionHandler collector = new CollectAllExceptionHandler(futures.size());
         waitWithDeadline(futures, timeout, timeUnit, collector);
@@ -278,14 +324,21 @@ public final class FutureUtil {
     }
 
     @PrivateApi
-    public static void waitWithDeadline(Collection<Future> futures, long timeout, TimeUnit timeUnit,
+    public static List<Throwable> waitUntilAllResponded(Collection<? extends Future> futures) {
+        CollectAllExceptionHandler collector = new CollectAllExceptionHandler(futures.size());
+        waitForever(futures, collector);
+        return collector.getThrowables();
+    }
+
+    @PrivateApi
+    public static void waitWithDeadline(Collection<? extends Future> futures, long timeout, TimeUnit timeUnit,
                                         ExceptionHandler exceptionHandler) {
 
         waitWithDeadline(futures, timeout, timeUnit, timeout, timeUnit, exceptionHandler);
     }
 
     @PrivateApi
-    public static void waitWithDeadline(Collection<Future> futures, long overallTimeout, TimeUnit overallTimeUnit,
+    public static void waitWithDeadline(Collection<? extends Future> futures, long overallTimeout, TimeUnit overallTimeUnit,
                                         long perFutureTimeout, TimeUnit perFutureTimeUnit) {
 
         waitWithDeadline(futures, overallTimeout, overallTimeUnit, perFutureTimeout, perFutureTimeUnit,
@@ -293,7 +346,7 @@ public final class FutureUtil {
     }
 
     @PrivateApi
-    public static void waitWithDeadline(Collection<Future> futures, long overallTimeout, TimeUnit overallTimeUnit,
+    public static void waitWithDeadline(Collection<? extends Future> futures, long overallTimeout, TimeUnit overallTimeUnit,
                                         long perFutureTimeout, TimeUnit perFutureTimeUnit, ExceptionHandler exceptionHandler) {
 
         // Calculate timeouts for whole operation and per future. If corresponding TimeUnits not set assume
@@ -355,11 +408,12 @@ public final class FutureUtil {
 
     /**
      * Check if all futures are done
-     * @param futures
-     * @return true if all futures are done. false otherwise
+     *
+     * @param futures the list of futures
+     * @return {@code true} if all futures are done
      */
     public static boolean allDone(Collection<Future> futures) {
-        for (Future f: futures) {
+        for (Future f : futures) {
             if (!f.isDone()) {
                 return false;
             }
@@ -369,11 +423,12 @@ public final class FutureUtil {
 
     /**
      * Rethrow exeception of the fist future that completed with an exception
+     *
      * @param futures
      * @throws Exception
      */
     public static void checkAllDone(Collection<Future> futures) throws Exception {
-        for (Future f: futures) {
+        for (Future f : futures) {
             if (f.isDone()) {
                 f.get();
             }
@@ -382,12 +437,13 @@ public final class FutureUtil {
 
     /**
      * Get all futures that are done
+     *
      * @param futures
      * @return list of completed futures
      */
     public static List<Future> getAllDone(Collection<Future> futures) {
         List<Future> doneFutures = new ArrayList<Future>();
-        for (Future f: futures) {
+        for (Future f : futures) {
             if (f.isDone()) {
                 doneFutures.add(f);
             }

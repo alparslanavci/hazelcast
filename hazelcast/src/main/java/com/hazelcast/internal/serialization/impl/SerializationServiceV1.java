@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,19 +16,19 @@
 
 package com.hazelcast.internal.serialization.impl;
 
-import com.hazelcast.core.ManagedContext;
 import com.hazelcast.core.PartitioningStrategy;
-import com.hazelcast.internal.serialization.InputOutputFactory;
 import com.hazelcast.internal.serialization.PortableContext;
 import com.hazelcast.internal.serialization.impl.ConstantSerializers.BooleanSerializer;
 import com.hazelcast.internal.serialization.impl.ConstantSerializers.ByteSerializer;
 import com.hazelcast.internal.serialization.impl.ConstantSerializers.StringArraySerializer;
-import com.hazelcast.internal.serialization.impl.bufferpool.BufferPoolFactory;
 import com.hazelcast.nio.BufferObjectDataInput;
+import com.hazelcast.nio.ClassNameFilter;
+import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.serialization.ClassDefinition;
 import com.hazelcast.nio.serialization.Data;
 import com.hazelcast.nio.serialization.DataSerializable;
 import com.hazelcast.nio.serialization.DataSerializableFactory;
+import com.hazelcast.nio.serialization.DataType;
 import com.hazelcast.nio.serialization.FieldDefinition;
 import com.hazelcast.nio.serialization.FieldType;
 import com.hazelcast.nio.serialization.HazelcastSerializationException;
@@ -43,8 +43,8 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Set;
@@ -64,6 +64,9 @@ import static com.hazelcast.internal.serialization.impl.ConstantSerializers.Shor
 import static com.hazelcast.internal.serialization.impl.ConstantSerializers.ShortSerializer;
 import static com.hazelcast.internal.serialization.impl.ConstantSerializers.StringSerializer;
 import static com.hazelcast.internal.serialization.impl.ConstantSerializers.TheByteArraySerializer;
+import static com.hazelcast.internal.serialization.impl.DataSerializableSerializer.EE_FLAG;
+import static com.hazelcast.internal.serialization.impl.DataSerializableSerializer.IDS_FLAG;
+import static com.hazelcast.internal.serialization.impl.DataSerializableSerializer.isFlagSet;
 import static com.hazelcast.internal.serialization.impl.JavaDefaultSerializers.BigDecimalSerializer;
 import static com.hazelcast.internal.serialization.impl.JavaDefaultSerializers.BigIntegerSerializer;
 import static com.hazelcast.internal.serialization.impl.JavaDefaultSerializers.ClassSerializer;
@@ -71,36 +74,59 @@ import static com.hazelcast.internal.serialization.impl.JavaDefaultSerializers.D
 import static com.hazelcast.internal.serialization.impl.JavaDefaultSerializers.EnumSerializer;
 import static com.hazelcast.internal.serialization.impl.JavaDefaultSerializers.JavaSerializer;
 import static com.hazelcast.internal.serialization.impl.SerializationUtil.createSerializerAdapter;
+import static com.hazelcast.util.MapUtil.createHashMap;
 
 public class SerializationServiceV1 extends AbstractSerializationService {
+
+    private static final int FACTORY_AND_CLASS_ID_BYTE_LENGTH = 8;
+    private static final int EE_BYTE_LENGTH = 2;
 
     private final PortableContextImpl portableContext;
     private final PortableSerializer portableSerializer;
 
-    SerializationServiceV1(InputOutputFactory inputOutputFactory, byte version, int portableVersion, ClassLoader classLoader,
-            Map<Integer, ? extends DataSerializableFactory> dataSerializableFactories,
-            Map<Integer, ? extends PortableFactory> portableFactories, ManagedContext managedContext,
-            PartitioningStrategy globalPartitionStrategy, int initialOutputBufferSize, BufferPoolFactory bufferPoolFactory,
-            boolean enableCompression, boolean enableSharedObject) {
-        super(inputOutputFactory, version, classLoader, managedContext, globalPartitionStrategy, initialOutputBufferSize,
-                bufferPoolFactory);
-
-        PortableHookLoader loader = new PortableHookLoader(portableFactories, classLoader);
-        portableContext = new PortableContextImpl(this, portableVersion);
+    SerializationServiceV1(AbstractBuilder<?> builder) {
+        super(builder);
+        PortableHookLoader loader = new PortableHookLoader(builder.portableFactories, builder.getClassLoader());
+        portableContext = new PortableContextImpl(this, builder.portableVersion);
         for (ClassDefinition cd : loader.getDefinitions()) {
             portableContext.registerClassDefinition(cd);
         }
 
         dataSerializerAdapter = createSerializerAdapter(
-                new DataSerializableSerializer(dataSerializableFactories, classLoader), this);
+                new DataSerializableSerializer(builder.dataSerializableFactories, builder.getClassLoader()), this);
         portableSerializer = new PortableSerializer(portableContext, loader.getFactories());
         portableSerializerAdapter = createSerializerAdapter(portableSerializer, this);
 
-        javaSerializerAdapter = createSerializerAdapter(new JavaSerializer(enableSharedObject, enableCompression), this);
+        javaSerializerAdapter = createSerializerAdapter(
+                new JavaSerializer(builder.enableSharedObject, builder.enableCompression, builder.classNameFilter), this);
         javaExternalizableAdapter = createSerializerAdapter(
-                new JavaDefaultSerializers.ExternalizableSerializer(enableCompression), this);
+                new JavaDefaultSerializers.ExternalizableSerializer(builder.enableCompression, builder.classNameFilter), this);
         registerConstantSerializers();
         registerJavaTypeSerializers();
+    }
+
+    @Override
+    public <B extends Data> B toData(Object obj, DataType type) {
+        if (type == DataType.NATIVE) {
+            throw new IllegalArgumentException("Native data type is not supported");
+        }
+        return toData(obj);
+    }
+
+    @Override
+    public <B extends Data> B toData(Object obj, DataType type, PartitioningStrategy strategy) {
+        if (type == DataType.NATIVE) {
+            throw new IllegalArgumentException("Native data type is not supported");
+        }
+        return toData(obj, strategy);
+    }
+
+    @Override
+    public <B extends Data> B convertData(Data data, DataType type) {
+        if (type == DataType.NATIVE) {
+            throw new IllegalArgumentException("Native data type is not supported");
+        }
+        return (B) data;
     }
 
     public PortableReader createPortableReader(Data data) throws IOException {
@@ -156,7 +182,7 @@ public class SerializationServiceV1 extends AbstractSerializationService {
     }
 
     public void registerClassDefinitions(Collection<ClassDefinition> classDefinitions, boolean checkClassDefErrors) {
-        final Map<Integer, ClassDefinition> classDefMap = new HashMap<Integer, ClassDefinition>(classDefinitions.size());
+        final Map<Integer, ClassDefinition> classDefMap = createHashMap(classDefinitions.size());
         for (ClassDefinition cd : classDefinitions) {
             if (classDefMap.containsKey(cd.getClassId())) {
                 throw new HazelcastSerializationException("Duplicate registration found for class-id[" + cd.getClassId() + "]!");
@@ -169,7 +195,7 @@ public class SerializationServiceV1 extends AbstractSerializationService {
     }
 
     protected void registerClassDefinition(ClassDefinition cd, Map<Integer, ClassDefinition> classDefMap,
-            boolean checkClassDefErrors) {
+                                           boolean checkClassDefErrors) {
         final Set<String> fieldNames = cd.getFieldNames();
         for (String fieldName : fieldNames) {
             FieldDefinition fd = cd.getField(fieldName);
@@ -190,5 +216,102 @@ public class SerializationServiceV1 extends AbstractSerializationService {
 
     final PortableSerializer getPortableSerializer() {
         return portableSerializer;
+    }
+
+    /**
+     * Init the ObjectDataInput for the given Data skipping the serialization header-bytes and navigating to the position
+     * from where the readData() starts reading the object fields.
+     *
+     * @param data data to initialize the ObjectDataInput with.
+     * @return the initialized ObjectDataInput without the header.
+     * @throws IOException
+     */
+    public ObjectDataInput initDataSerializableInputAndSkipTheHeader(Data data) throws IOException {
+        ObjectDataInput input = createObjectDataInput(data);
+        byte header = input.readByte();
+        if (isFlagSet(header, IDS_FLAG)) {
+            skipBytesSafely(input, FACTORY_AND_CLASS_ID_BYTE_LENGTH);
+        } else {
+            input.readUTF();
+        }
+
+        if (isFlagSet(header, EE_FLAG)) {
+            skipBytesSafely(input, EE_BYTE_LENGTH);
+        }
+        return input;
+    }
+
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    private void skipBytesSafely(ObjectDataInput input, int count) throws IOException {
+        if (input.skipBytes(count) != count) {
+            throw new HazelcastSerializationException("Malformed serialization format");
+        }
+    }
+
+    public abstract static class AbstractBuilder<T extends AbstractBuilder<T>> extends AbstractSerializationService.Builder<T> {
+
+        private int portableVersion;
+        private Map<Integer, ? extends DataSerializableFactory> dataSerializableFactories = Collections.emptyMap();
+        private Map<Integer, ? extends PortableFactory> portableFactories = Collections.emptyMap();
+        private boolean enableCompression;
+        private boolean enableSharedObject;
+        private ClassNameFilter classNameFilter;
+
+        protected AbstractBuilder() {
+        }
+
+        public final T withPortableVersion(int portableVersion) {
+            this.portableVersion = portableVersion;
+            return self();
+        }
+
+        public final T withDataSerializableFactories(
+                Map<Integer, ? extends DataSerializableFactory> dataSerializableFactories) {
+            this.dataSerializableFactories = dataSerializableFactories;
+            return self();
+        }
+
+        public Map<Integer, ? extends DataSerializableFactory> getDataSerializableFactories() {
+            return dataSerializableFactories;
+        }
+
+        public final T withPortableFactories(Map<Integer, ? extends PortableFactory> portableFactories) {
+            this.portableFactories = portableFactories;
+            return self();
+        }
+
+        public final T withEnableCompression(boolean enableCompression) {
+            this.enableCompression = enableCompression;
+            return self();
+        }
+
+        public final T withEnableSharedObject(boolean enableSharedObject) {
+            this.enableSharedObject = enableSharedObject;
+            return self();
+        }
+
+        public final T withClassNameFilter(ClassNameFilter classNameFilter) {
+            this.classNameFilter = classNameFilter;
+            return self();
+        }
+    }
+
+    public static final class Builder extends AbstractBuilder<Builder> {
+
+        protected Builder() {
+        }
+
+        @Override
+        protected Builder self() {
+            return this;
+        }
+
+        public SerializationServiceV1 build() {
+            return new SerializationServiceV1(this);
+        }
+
     }
 }

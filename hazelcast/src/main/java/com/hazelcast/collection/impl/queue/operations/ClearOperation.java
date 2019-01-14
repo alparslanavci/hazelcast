@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,13 +24,14 @@ import com.hazelcast.nio.serialization.Data;
 import com.hazelcast.spi.Notifier;
 import com.hazelcast.spi.Operation;
 import com.hazelcast.spi.WaitNotifyKey;
+import com.hazelcast.spi.impl.MutatingOperation;
 
 import java.util.Map;
 
 /**
  * Clears items stored by Queue.
  */
-public class ClearOperation extends QueueBackupAwareOperation implements Notifier {
+public class ClearOperation extends QueueBackupAwareOperation implements Notifier, MutatingOperation {
 
     private Map<Long, Data> dataMap;
 

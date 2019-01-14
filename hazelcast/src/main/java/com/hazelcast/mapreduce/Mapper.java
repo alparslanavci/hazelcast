@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 package com.hazelcast.mapreduce;
 
-import com.hazelcast.spi.annotation.Beta;
+import com.hazelcast.nio.serialization.BinaryInterface;
 
 import java.io.Serializable;
 
@@ -50,8 +50,12 @@ import java.io.Serializable;
  * @param <KeyOut>   The key type for mapped results
  * @param <ValueOut> The value type for mapped results
  * @since 3.2
+ * @deprecated MapReduce is deprecated and will be removed in 4.0.
+ * For map aggregations, you can use {@link com.hazelcast.aggregation.Aggregator} on IMap.
+ * For general data processing, it is superseded by <a href="http://jet.hazelcast.org">Hazelcast Jet</a>.
  */
-@Beta
+@Deprecated
+@BinaryInterface
 public interface Mapper<KeyIn, ValueIn, KeyOut, ValueOut>
         extends Serializable {
 

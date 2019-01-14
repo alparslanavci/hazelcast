@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,12 @@ package com.hazelcast.config;
 /**
  * Contains configuration for a Near Cache (read-only).
  *
- * @deprecated this class will be removed in 3.8; it is meant for internal usage only.
+ * @deprecated this class will be removed in 4.0; it is meant for internal usage only.
  */
 public class NearCacheConfigReadOnly extends NearCacheConfig {
+
+    public NearCacheConfigReadOnly() {
+    }
 
     public NearCacheConfigReadOnly(NearCacheConfig config) {
         super(config);
@@ -53,6 +56,11 @@ public class NearCacheConfigReadOnly extends NearCacheConfig {
     }
 
     @Override
+    public NearCacheConfig setSerializeKeys(boolean serializeKeys) {
+        throw new UnsupportedOperationException("This config is read-only");
+    }
+
+    @Override
     public NearCacheConfig setInvalidateOnChange(boolean invalidateOnChange) {
         throw new UnsupportedOperationException("This config is read-only");
     }
@@ -80,5 +88,25 @@ public class NearCacheConfigReadOnly extends NearCacheConfig {
     @Override
     public NearCacheConfig setEvictionConfig(EvictionConfig evictionConfig) {
         throw new UnsupportedOperationException("This config is read-only");
+    }
+
+    @Override
+    public EvictionConfig getEvictionConfig() {
+        return super.getEvictionConfig().getAsReadOnly();
+    }
+
+    @Override
+    public NearCacheConfig setPreloaderConfig(NearCachePreloaderConfig preloaderConfig) {
+        throw new UnsupportedOperationException("This config is read-only");
+    }
+
+    @Override
+    public NearCachePreloaderConfig getPreloaderConfig() {
+        return super.getPreloaderConfig().getAsReadOnly();
+    }
+
+    @Override
+    public int getId() {
+        throw new UnsupportedOperationException("NearCacheConfigReadOnly is not serializable");
     }
 }

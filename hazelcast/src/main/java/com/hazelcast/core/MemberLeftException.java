@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.core;
 import com.hazelcast.instance.MemberImpl;
 import com.hazelcast.nio.Address;
 import com.hazelcast.spi.exception.RetryableException;
+import com.hazelcast.version.MemberVersion;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -45,6 +46,10 @@ public class MemberLeftException extends ExecutionException implements Retryable
         this.member = member;
     }
 
+    public MemberLeftException(Throwable cause) {
+        super(cause);
+    }
+
     /**
      * Returns the member that left the cluster
      * @return the member that left the cluster
@@ -57,13 +62,14 @@ public class MemberLeftException extends ExecutionException implements Retryable
         out.defaultWriteObject();
 
         Address address = member.getAddress();
-        String host  = address.getHost();
+        String host = address.getHost();
         int port = address.getPort();
 
         out.writeUTF(member.getUuid());
         out.writeUTF(host);
         out.writeInt(port);
         out.writeBoolean(member.isLiteMember());
+        out.writeObject(member.getVersion());
     }
 
     private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
@@ -73,7 +79,8 @@ public class MemberLeftException extends ExecutionException implements Retryable
         String host = in.readUTF();
         int port = in.readInt();
         boolean liteMember = in.readBoolean();
+        MemberVersion version = (MemberVersion) in.readObject();
 
-        member = new MemberImpl(new Address(host, port), false, uuid, null, null, liteMember);
+        member = new MemberImpl(new Address(host, port), version, false, uuid, null, liteMember);
     }
 }

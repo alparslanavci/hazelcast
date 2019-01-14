@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,41 +20,49 @@ import com.hazelcast.config.Config;
 import com.hazelcast.config.InMemoryFormat;
 import com.hazelcast.config.RingbufferConfig;
 import com.hazelcast.config.RingbufferStoreConfig;
+import com.hazelcast.core.HazelcastException;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.RingbufferStore;
 import com.hazelcast.core.RingbufferStoreFactory;
 import com.hazelcast.nio.serialization.Data;
+import com.hazelcast.ringbuffer.OverflowPolicy;
 import com.hazelcast.ringbuffer.Ringbuffer;
-import com.hazelcast.test.HazelcastSerialClassRunner;
+import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
+import com.hazelcast.test.annotation.ParallelTest;
 import com.hazelcast.test.annotation.QuickTest;
 import com.hazelcast.util.ConcurrencyUtil;
 import com.hazelcast.util.ConstructorFunction;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.hazelcast.config.InMemoryFormat.BINARY;
 import static com.hazelcast.config.InMemoryFormat.OBJECT;
 import static com.hazelcast.config.RingbufferConfig.DEFAULT_CAPACITY;
+import static com.hazelcast.instance.TestUtil.terminateInstance;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-@RunWith(HazelcastSerialClassRunner.class)
-@Category(QuickTest.class)
+@RunWith(HazelcastParallelClassRunner.class)
+@Category({QuickTest.class, ParallelTest.class})
 public class RingbufferStoreTest extends HazelcastTestSupport {
 
     private static Config getConfig(String ringbufferName,
@@ -81,6 +89,7 @@ public class RingbufferStoreTest extends HazelcastTestSupport {
         final Config config = getConfig("testRingbufferStore", DEFAULT_CAPACITY, OBJECT, rbStoreConfig);
         final TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
 
+        // add items to the ring buffer and the store and shut down
         final HazelcastInstance instance = factory.newHazelcastInstance(config);
         final Ringbuffer<Object> ringbuffer = instance.getRingbuffer("testRingbufferStore");
         for (int i = 0; i < numItems; i++) {
@@ -88,11 +97,13 @@ public class RingbufferStoreTest extends HazelcastTestSupport {
         }
         instance.shutdown();
 
+        // now get a new ring buffer and read the items from the store
         final HazelcastInstance instance2 = factory.newHazelcastInstance(config);
         final Ringbuffer<Object> ringbuffer2 = instance2.getRingbuffer("testRingbufferStore");
 
         // the actual ring buffer is empty but we can still load items from it
         assertEquals(0, ringbuffer2.size());
+        assertEquals(DEFAULT_CAPACITY, ringbuffer2.remainingCapacity());
         assertEquals(numItems, rbStore.store.size());
 
         for (int i = 0; i < numItems; i++) {
@@ -100,6 +111,39 @@ public class RingbufferStoreTest extends HazelcastTestSupport {
         }
 
         rbStore.assertAwait(3);
+    }
+
+    @Test
+    public void testRingbufferStoreAllAndReadFromMemory() throws Exception {
+        final int numItems = 200;
+        final WriteOnlyRingbufferStore<Integer> rbStore = new WriteOnlyRingbufferStore<Integer>();
+        final RingbufferStoreConfig rbStoreConfig = new RingbufferStoreConfig()
+                .setEnabled(true)
+                .setStoreImplementation(rbStore);
+        final Config config = getConfig("testRingbufferStore", DEFAULT_CAPACITY, OBJECT, rbStoreConfig);
+        final TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
+        final HazelcastInstance instance = factory.newHazelcastInstance(config);
+        final HazelcastInstance instance2 = factory.newHazelcastInstance(config);
+        warmUpPartitions(instance, instance2);
+
+        // add items to both ring buffers (master and backup) and shut down the master
+        final Ringbuffer<Object> ringbuffer = instance.getRingbuffer("testRingbufferStore");
+        final ArrayList<Integer> items = new ArrayList<Integer>();
+        for (int i = 0; i < numItems; i++) {
+            items.add(i);
+        }
+        ringbuffer.addAllAsync(items, OverflowPolicy.OVERWRITE).get();
+        terminateInstance(instance);
+
+        // now read items from the backup
+        final Ringbuffer<Object> ringbuffer2 = instance2.getRingbuffer("testRingbufferStore");
+        assertEquals(numItems, ringbuffer2.size());
+        assertEquals(numItems, rbStore.store.size());
+
+        // assert that the backup has all items in memory, without loading from the store
+        for (int i = 0; i < numItems; i++) {
+            assertEquals(i, ringbuffer2.readOne(i));
+        }
     }
 
     @Test
@@ -130,9 +174,7 @@ public class RingbufferStoreTest extends HazelcastTestSupport {
     }
 
     @Test
-    @Ignore(value = "Since the RingBufferStoreConfig is now propagated correctly to the read-only config the test runs" +
-            " into a NPE while casting `null` to `long` in `IdCheckerRingbufferStore.getLargestSequence()`")
-    public void testStoreId_whenNodeDown() {
+    public void testStoreId_whenNodeDown() throws InterruptedException {
         final IdCheckerRingbufferStore rbStore = new IdCheckerRingbufferStore();
         final RingbufferStoreConfig rbStoreConfig = new RingbufferStoreConfig()
                 .setEnabled(true)
@@ -145,13 +187,50 @@ public class RingbufferStoreTest extends HazelcastTestSupport {
 
         final String name = generateKeyOwnedBy(instance1);
         final Ringbuffer<Object> ringbuffer = instance2.getRingbuffer(name);
-        ringbuffer.add(randomString());
-        ringbuffer.add(randomString());
-        ringbuffer.add(randomString());
+        final HashMap<Long, String> addedItems = new HashMap<Long, String>();
 
+        for (int i = 0; i < 3; i++) {
+            final String item = randomString();
+            addedItems.put(ringbuffer.add(item), item);
+        }
         instance1.shutdown();
 
-        ringbuffer.add(randomString());
+        final String item = randomString();
+        addedItems.put(ringbuffer.add(item), item);
+
+        for (Entry<Long, String> e : addedItems.entrySet()) {
+            assertEquals("The ring buffer returned a different object than the one which was stored",
+                    e.getValue(), ringbuffer.readOne(e.getKey()));
+        }
+    }
+
+    @Test
+    public void testStoreId_writeToMasterAndReadFromBackup() throws InterruptedException {
+        final IdCheckerRingbufferStore rbStore = new IdCheckerRingbufferStore();
+        final RingbufferStoreConfig rbStoreConfig = new RingbufferStoreConfig()
+                .setEnabled(true)
+                .setStoreImplementation(rbStore);
+        final Config config = getConfig("default", DEFAULT_CAPACITY, OBJECT, rbStoreConfig);
+
+        final TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(3);
+        final HazelcastInstance instance1 = factory.newHazelcastInstance(config);
+        final HazelcastInstance instance2 = factory.newHazelcastInstance(config);
+        warmUpPartitions(instance1, instance2);
+
+        final String name = generateKeyOwnedBy(instance1);
+        final Ringbuffer<Object> masterRB = instance1.getRingbuffer(name);
+        final HashMap<Long, Integer> addedItems = new HashMap<Long, Integer>();
+
+        for (int i = 0; i < 100; i++) {
+            addedItems.put(masterRB.add(i), i);
+        }
+        terminateInstance(instance1);
+
+        final Ringbuffer<Object> backupRB = instance2.getRingbuffer(name);
+        for (Entry<Long, Integer> e : addedItems.entrySet()) {
+            assertEquals("The ring buffer returned a different object than the one which was stored",
+                    e.getValue(), backupRB.readOne(e.getKey()));
+        }
     }
 
     @Test
@@ -187,8 +266,8 @@ public class RingbufferStoreTest extends HazelcastTestSupport {
         final Ringbuffer<Object> ringbuffer = instance.getRingbuffer(ringbufferName);
         ringbuffer.add(1);
 
-        assertEquals("Expected that the ring buffer store would not be initialized" +
-                " since we disabled it in the ring buffer store config but found initialized ", 0, rbStoreFactory.stores.size());
+        assertEquals("Expected that the RingbufferStore would not be initialized since we disabled it"
+                + " in the RingbufferStoreConfig, but found initialized", 0, rbStoreFactory.stores.size());
     }
 
     @Test
@@ -208,6 +287,45 @@ public class RingbufferStoreTest extends HazelcastTestSupport {
         assertEquals(3, ringbuffer.readOne(lastSequence));
     }
 
+    @Test(expected = HazelcastException.class)
+    public void testRingbufferStore_addThrowsException() {
+        final String ringbufferName = randomString();
+        final RingbufferStoreConfig rbStoreConfig = new RingbufferStoreConfig()
+                .setStoreImplementation(new ExceptionThrowingRingbufferStore())
+                .setEnabled(true);
+        final Config config = getConfig(ringbufferName, DEFAULT_CAPACITY, OBJECT, rbStoreConfig);
+
+        final HazelcastInstance node = createHazelcastInstance(config);
+        final Ringbuffer<Object> ringbuffer = node.getRingbuffer(ringbufferName);
+        ringbuffer.add(1);
+    }
+
+    @Test(expected = ExecutionException.class)
+    public void testRingbufferStore_addAllThrowsException() throws Exception {
+        final String ringbufferName = randomString();
+        final RingbufferStoreConfig rbStoreConfig = new RingbufferStoreConfig()
+                .setStoreImplementation(new ExceptionThrowingRingbufferStore())
+                .setEnabled(true);
+        final Config config = getConfig(ringbufferName, DEFAULT_CAPACITY, OBJECT, rbStoreConfig);
+
+        final HazelcastInstance node = createHazelcastInstance(config);
+        final Ringbuffer<Object> ringbuffer = node.getRingbuffer(ringbufferName);
+        ringbuffer.addAllAsync(Arrays.asList(1, 2), OverflowPolicy.OVERWRITE).get();
+    }
+
+    @Test(expected = HazelcastException.class)
+    public void testRingbufferStore_getLargestSequenceThrowsException() {
+        final String ringbufferName = randomString();
+        final RingbufferStoreConfig rbStoreConfig = new RingbufferStoreConfig()
+                .setStoreImplementation(new ExceptionThrowingRingbufferStore(true))
+                .setEnabled(true);
+        final Config config = getConfig(ringbufferName, DEFAULT_CAPACITY, OBJECT, rbStoreConfig);
+
+        final HazelcastInstance node = createHazelcastInstance(config);
+        node.getRingbuffer(ringbufferName).size();
+    }
+
+
     static class SimpleRingbufferStoreFactory implements RingbufferStoreFactory<Integer> {
 
         private final ConcurrentMap<String, RingbufferStore> stores = new ConcurrentHashMap<String, RingbufferStore>();
@@ -224,30 +342,67 @@ public class RingbufferStoreTest extends HazelcastTestSupport {
         }
     }
 
-    static class IdCheckerRingbufferStore implements RingbufferStore {
-        Long lastKey;
+    static class IdCheckerRingbufferStore<T> implements RingbufferStore<T> {
+        long lastKey = -1;
+        final Map<Long, T> store = new LinkedHashMap<Long, T>();
 
         @Override
-        public void store(final long sequence, final Object value) {
-            if (lastKey != null && lastKey >= sequence) {
+        public void store(final long sequence, final T value) {
+            if (lastKey >= sequence) {
                 throw new RuntimeException("key[" + sequence + "] is already stored");
             }
             lastKey = sequence;
+            store.put(sequence, value);
         }
 
         @Override
-        public void storeAll(long firstItemSequence, Object[] items) {
-
+        public void storeAll(long firstItemSequence, T[] items) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
-        public Object load(final long sequence) {
-            return null;
+        public T load(final long sequence) {
+            return store.get(sequence);
         }
 
         @Override
         public long getLargestSequence() {
             return lastKey;
+        }
+    }
+
+    static class ExceptionThrowingRingbufferStore<T> implements RingbufferStore<T> {
+        private final boolean getLargestSequenceThrowsException;
+
+        public ExceptionThrowingRingbufferStore() {
+            this(false);
+        }
+
+        ExceptionThrowingRingbufferStore(boolean getLargestSequenceThrowsException) {
+            this.getLargestSequenceThrowsException = getLargestSequenceThrowsException;
+        }
+
+        @Override
+        public void store(long sequence, T data) {
+            throw new RuntimeException();
+        }
+
+        @Override
+        public void storeAll(long firstItemSequence, T[] items) {
+            throw new RuntimeException();
+        }
+
+        @Override
+        public T load(long sequence) {
+            throw new RuntimeException();
+        }
+
+        @Override
+        public long getLargestSequence() {
+            if (getLargestSequenceThrowsException) {
+                throw new RuntimeException();
+            }
+            return -1;
         }
     }
 
@@ -281,7 +436,7 @@ public class RingbufferStoreTest extends HazelcastTestSupport {
             assertTrue("Load remaining: " + latchLoad.getCount(), latchLoad.await(seconds, SECONDS));
         }
 
-        Map getStore() {
+        Map<Long, T> getStore() {
             return store;
         }
 
@@ -306,6 +461,42 @@ public class RingbufferStoreTest extends HazelcastTestSupport {
             callCount.incrementAndGet();
             latchLoad.countDown();
             return store.get(sequence);
+        }
+
+        @Override
+        public long getLargestSequence() {
+            final Set<Long> coll = store.keySet();
+            return coll.isEmpty() ? -1 : Collections.max(coll);
+        }
+    }
+
+    static class WriteOnlyRingbufferStore<T> implements RingbufferStore<T> {
+
+        final Map<Long, T> store = new LinkedHashMap<Long, T>();
+
+
+        public WriteOnlyRingbufferStore() {
+        }
+
+        Map<Long, T> getStore() {
+            return store;
+        }
+
+        @Override
+        public void store(long sequence, T data) {
+            store.put(sequence, data);
+        }
+
+        @Override
+        public void storeAll(long firstItemSequence, T[] items) {
+            for (int i = 0; i < items.length; i++) {
+                store.put(firstItemSequence + i, items[i]);
+            }
+        }
+
+        @Override
+        public T load(long sequence) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

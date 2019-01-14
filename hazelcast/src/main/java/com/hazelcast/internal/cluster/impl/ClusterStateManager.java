@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,12 @@ package com.hazelcast.internal.cluster.impl;
 import com.hazelcast.cluster.ClusterState;
 import com.hazelcast.core.Member;
 import com.hazelcast.core.MemberLeftException;
+import com.hazelcast.instance.MemberImpl;
 import com.hazelcast.instance.Node;
-import com.hazelcast.internal.cluster.impl.operations.LockClusterStateOperation;
+import com.hazelcast.internal.cluster.Versions;
+import com.hazelcast.internal.cluster.impl.operations.LockClusterStateOp;
 import com.hazelcast.internal.partition.InternalPartitionService;
+import com.hazelcast.internal.util.LockGuard;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.nio.Address;
 import com.hazelcast.spi.Operation;
@@ -35,6 +38,7 @@ import com.hazelcast.transaction.impl.TransactionManagerServiceImpl;
 import com.hazelcast.util.ExceptionUtil;
 import com.hazelcast.util.FutureUtil;
 import com.hazelcast.util.Preconditions;
+import com.hazelcast.version.Version;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -43,7 +47,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
-import java.util.logging.Level;
 
 import static com.hazelcast.internal.cluster.impl.ClusterServiceImpl.SERVICE_NAME;
 import static com.hazelcast.util.FutureUtil.waitWithDeadline;
@@ -65,29 +68,38 @@ public class ClusterStateManager {
 
     private static final long LOCK_LEASE_EXTENSION_MILLIS = TimeUnit.SECONDS.toMillis(20);
 
+    // this is the version at which the cluster operates. see Cluster#getClusterVersion
+    volatile Version clusterVersion = Version.UNKNOWN;
+
     private final Node node;
     private final ILogger logger;
     private final Lock clusterServiceLock;
-    private final AtomicReference<ClusterStateLock> stateLockRef
-            = new AtomicReference<ClusterStateLock>(ClusterStateLock.NOT_LOCKED);
+    private final AtomicReference<LockGuard> stateLockRef = new AtomicReference<LockGuard>(LockGuard.NOT_LOCKED);
+
     private volatile ClusterState state = ClusterState.ACTIVE;
 
     ClusterStateManager(Node node, Lock clusterServiceLock) {
         this.node = node;
         this.clusterServiceLock = clusterServiceLock;
-        logger = node.getLogger(getClass());
+        this.logger = node.getLogger(getClass());
     }
 
     public ClusterState getState() {
-        ClusterStateLock stateLock = getStateLock();
+        LockGuard stateLock = getStateLock();
         return stateLock.isLocked() ? ClusterState.IN_TRANSITION : state;
     }
 
-    ClusterStateLock getStateLock() {
-        ClusterStateLock stateLock = stateLockRef.get();
+    public Version getClusterVersion() {
+        // if version is locked we still operate using the "old" version, so we return this one
+        return clusterVersion;
+    }
+
+    LockGuard getStateLock() {
+        LockGuard stateLock = stateLockRef.get();
         while (stateLock.isLeaseExpired()) {
-            if (stateLockRef.compareAndSet(stateLock, ClusterStateLock.NOT_LOCKED)) {
-                stateLock = ClusterStateLock.NOT_LOCKED;
+            if (stateLockRef.compareAndSet(stateLock, LockGuard.NOT_LOCKED)) {
+                logger.fine("Cluster state lock: " + stateLock + " is expired.");
+                stateLock = LockGuard.NOT_LOCKED;
                 break;
             }
             stateLock = stateLockRef.get();
@@ -95,7 +107,7 @@ public class ClusterStateManager {
         return stateLock;
     }
 
-    void initialClusterState(ClusterState initialState) {
+    void initialClusterState(ClusterState initialState, Version version) {
         clusterServiceLock.lock();
         try {
             final ClusterState currentState = getState();
@@ -104,7 +116,10 @@ public class ClusterStateManager {
                         + initialState);
                 return;
             }
-            doSetClusterState(initialState, true);
+            // no need to validate again
+            logger.fine("Setting initial cluster state: " + initialState + " and version: " + version);
+            validateNodeCompatibleWith(version);
+            setClusterStateAndVersion(initialState, version, true);
         } finally {
             clusterServiceLock.unlock();
         }
@@ -119,48 +134,94 @@ public class ClusterStateManager {
         }
     }
 
-    private void doSetClusterState(ClusterState newState, boolean isTransient) {
+    public void setClusterVersion(Version newVersion) {
+        clusterServiceLock.lock();
+        try {
+            doSetClusterVersion(newVersion);
+        } finally {
+            clusterServiceLock.unlock();
+        }
+    }
+
+    private void setClusterStateAndVersion(ClusterState newState, Version newVersion, boolean isTransient) {
         this.state = newState;
-        stateLockRef.set(ClusterStateLock.NOT_LOCKED);
+        this.clusterVersion = newVersion;
+        stateLockRef.set(LockGuard.NOT_LOCKED);
         changeNodeState(newState);
         node.getNodeExtension().onClusterStateChange(newState, isTransient);
+        node.getNodeExtension().onClusterVersionChange(newVersion);
+    }
+
+    private void doSetClusterState(ClusterState newState, boolean isTransient) {
+        this.state = newState;
+        stateLockRef.set(LockGuard.NOT_LOCKED);
+        changeNodeState(newState);
+        node.getNodeExtension().onClusterStateChange(newState, isTransient);
+    }
+
+    private void doSetClusterVersion(Version newVersion) {
+        this.clusterVersion = newVersion;
+        stateLockRef.set(LockGuard.NOT_LOCKED);
+        node.getNodeExtension().onClusterVersionChange(newVersion);
     }
 
     void reset() {
         clusterServiceLock.lock();
         try {
             state = ClusterState.ACTIVE;
-            stateLockRef.set(ClusterStateLock.NOT_LOCKED);
+            // not notifying cluster version listeners about change to UNKNOWN. consider for example the following scenario:
+            // - node starts with codebase version 3.9, overrides init cluster version via group property to 3.8
+            // - node joins an existing 3.8 cluster which is undergoing rolling-upgrade to 3.9
+            // - once all cluster members are on 3.9, cluster version is upgraded to 3.9.0
+            // - clusterVersion is reset to UNKNOWN
+            // - if cluster version listener is notified of null cluster version, it should receive the overridden one (3.8)
+            // - if 3.8 discovery & join messages are incompatible, node will not be able to join 3.9 cluster
+            // Instead, not notifying cluster version listeners will let the node use its last set cluster version for discovery &
+            // join messages and join the cluster.
+            clusterVersion = Version.UNKNOWN;
+            stateLockRef.set(LockGuard.NOT_LOCKED);
         } finally {
             clusterServiceLock.unlock();
         }
     }
 
-    public void lockClusterState(ClusterState newState, Address initiator, String txnId,
-                                 long leaseTime, int partitionStateVersion) {
-        Preconditions.checkNotNull(newState);
+    /**
+     * Validate cluster state change requested and set a {@code ClusterStateLock}.
+     * @param stateChange
+     * @param initiator
+     * @param txnId
+     * @param leaseTime
+     * @param partitionStateVersion
+     */
+    public void lockClusterState(ClusterStateChange stateChange, Address initiator, String txnId, long leaseTime,
+            int memberListVersion, int partitionStateVersion) {
+        Preconditions.checkNotNull(stateChange);
         clusterServiceLock.lock();
         try {
             if (!node.getNodeExtension().isStartCompleted()) {
                 throw new IllegalStateException("Can not lock cluster state! Startup is not completed yet!");
             }
 
-            checkMigrationsAndPartitionStateVersion(newState, partitionStateVersion);
-
-            final ClusterStateLock currentLock = getStateLock();
-            if (!currentLock.allowsLock(txnId)) {
-                throw new TransactionException("Locking failed for " + initiator + ", tx: " + txnId
-                        + ", current state: " + toString());
+            if (node.getClusterService().getClusterJoinManager().isMastershipClaimInProgress()) {
+                throw new IllegalStateException("Can not lock cluster state! Mastership claim is in progress!");
             }
 
-            stateLockRef.set(new ClusterStateLock(initiator, txnId, leaseTime));
+            if (stateChange.isOfType(Version.class)) {
+                validateNodeCompatibleWith((Version) stateChange.getNewState());
+                validateClusterVersionChange((Version) stateChange.getNewState());
+            }
+
+            checkMemberListVersion(memberListVersion);
+            checkMigrationsAndPartitionStateVersion(stateChange, partitionStateVersion);
+
+            lockOrExtendClusterState(initiator, txnId, leaseTime);
 
             try {
                 // check migration status and partition-state version again
                 // if partition state is changed then release the lock and fail.
-                checkMigrationsAndPartitionStateVersion(newState, partitionStateVersion);
+                checkMigrationsAndPartitionStateVersion(stateChange, partitionStateVersion);
             } catch (IllegalStateException e) {
-                stateLockRef.set(ClusterStateLock.NOT_LOCKED);
+                stateLockRef.set(LockGuard.NOT_LOCKED);
                 throw e;
             }
         } finally {
@@ -168,15 +229,61 @@ public class ClusterStateManager {
         }
     }
 
-    private void checkMigrationsAndPartitionStateVersion(ClusterState newState, int partitionStateVersion) {
+    private void checkMemberListVersion(int memberListVersion) {
+        // RU_COMPAT_V3_10
+        if (clusterVersion.isGreaterOrEqual(Versions.V3_11)) {
+            int thisMemberListVersion = node.getClusterService().getMemberListVersion();
+            if (memberListVersion != thisMemberListVersion) {
+                throw new IllegalStateException(
+                        "Can not lock cluster state! Member list versions are not matching!"
+                                + " Expected version: " + memberListVersion
+                                + ", Current version: " + thisMemberListVersion);
+            }
+        }
+    }
+
+    private void lockOrExtendClusterState(Address initiator, String txnId, long leaseTime) {
+        Preconditions.checkPositive(leaseTime, "Lease time should be positive!");
+
+        LockGuard currentLock = getStateLock();
+        if (!currentLock.allowsLock(txnId)) {
+            throw new TransactionException("Locking failed for " + initiator + ", tx: " + txnId
+                    + ", current state: " + toString());
+        }
+
+        long newLeaseTime = currentLock.getRemainingTime() + leaseTime;
+        if (newLeaseTime < 0L) {
+            newLeaseTime = Long.MAX_VALUE;
+        }
+        stateLockRef.set(new LockGuard(initiator, txnId, newLeaseTime));
+    }
+
+    // check if current node is compatible with requested cluster version
+    // wraps NodeExtension#isNodeVersionCompatibleWith(Version) and throws a VersionMismatchException if incompatibility is found.
+    private void validateNodeCompatibleWith(Version clusterVersion) {
+        if (!node.getNodeExtension().isNodeVersionCompatibleWith(clusterVersion)) {
+            throw new VersionMismatchException("Node's codebase version " + node.getVersion() + " is incompatible with "
+                    + "the requested cluster version " + clusterVersion);
+        }
+    }
+
+    // validate transition from current to newClusterVersion is allowed
+    private void validateClusterVersionChange(Version newClusterVersion) {
+        if (!clusterVersion.isUnknown() && clusterVersion.getMajor() != newClusterVersion.getMajor()) {
+            throw new IllegalArgumentException("Transition to requested version " + newClusterVersion
+                    + " not allowed for current cluster version " + clusterVersion);
+        }
+    }
+
+    private void checkMigrationsAndPartitionStateVersion(ClusterStateChange stateChange, int partitionStateVersion) {
         final InternalPartitionService partitionService = node.getPartitionService();
         final int thisPartitionStateVersion = partitionService.getPartitionStateVersion();
 
         if (partitionService.hasOnGoingMigrationLocal()) {
             throw new IllegalStateException("Still have pending migration tasks, "
-                    + "cannot lock cluster state! New state: " + newState
+                    + "cannot lock cluster state! New state: " + stateChange
                     + ", current state: " + getState());
-        } else  if (partitionStateVersion != thisPartitionStateVersion) {
+        } else if (partitionStateVersion != thisPartitionStateVersion) {
             throw new IllegalStateException("Can not lock cluster state! Partition tables have different versions! "
                     + "Expected version: " + partitionStateVersion + " Current version: " + thisPartitionStateVersion);
         }
@@ -185,16 +292,17 @@ public class ClusterStateManager {
     public boolean rollbackClusterState(String txnId) {
         clusterServiceLock.lock();
         try {
-            final ClusterStateLock currentLock = getStateLock();
+            final LockGuard currentLock = getStateLock();
             if (!currentLock.allowsUnlock(txnId)) {
                 return false;
             }
 
-            stateLockRef.set(ClusterStateLock.NOT_LOCKED);
+            logger.fine("Rolling back cluster state transaction: " + txnId);
+            stateLockRef.set(LockGuard.NOT_LOCKED);
 
-            // if state remains ACTIVE after rollback, then remove all members which left during transaction.
-            if (state == ClusterState.ACTIVE) {
-                node.getClusterService().removeMembersDeadWhileClusterIsNotActive();
+            // if state allows join after rollback, then remove all members which left during transaction.
+            if (state.isJoinAllowed()) {
+                node.getClusterService().getMembershipManager().removeMembersDeadInNotJoinableState();
             }
             return true;
         } finally {
@@ -202,30 +310,39 @@ public class ClusterStateManager {
         }
     }
 
-    public void commitClusterState(ClusterState newState, Address initiator, String txnId) {
+    // for tests only
+    void commitClusterState(ClusterStateChange newState, Address initiator, String txnId) {
         commitClusterState(newState, initiator, txnId, false);
     }
 
-    public void commitClusterState(ClusterState newState, Address initiator, String txnId, boolean isTransient) {
-        Preconditions.checkNotNull(newState);
-        if (newState == ClusterState.IN_TRANSITION) {
-            throw new IllegalArgumentException("IN_TRANSITION is an internal state!");
-        }
+    public void commitClusterState(ClusterStateChange stateChange, Address initiator, String txnId, boolean isTransient) {
+        Preconditions.checkNotNull(stateChange);
+        stateChange.validate();
 
         clusterServiceLock.lock();
         try {
-            final ClusterStateLock stateLock = getStateLock();
+            final LockGuard stateLock = getStateLock();
             if (!stateLock.allowsUnlock(txnId)) {
                 throw new TransactionException(
-                        "Cluster state change [" + state + " -> " + newState + "] failed for "
+                        "Cluster state change [" + state + " -> " + stateChange + "] failed for "
                                 + initiator + ", current state: " + stateToString());
             }
 
-            doSetClusterState(newState, isTransient);
+            if (stateChange.isOfType(ClusterState.class)) {
+                ClusterState newState = (ClusterState) stateChange.getNewState();
+                doSetClusterState(newState, isTransient);
 
-            // if state is changed to ACTIVE, then remove all members which left while not active.
-            if (newState == ClusterState.ACTIVE) {
-                node.getClusterService().removeMembersDeadWhileClusterIsNotActive();
+                // if state is changed to allow joins, then remove all members which left while not active.
+                if (newState.isJoinAllowed()) {
+                    node.getClusterService().getMembershipManager().removeMembersDeadInNotJoinableState();
+                }
+            } else if (stateChange.isOfType(Version.class)) {
+                // version is validated on cluster-state-lock, thus we can commit without checking compatibility
+                Version newVersion = (Version) stateChange.getNewState();
+                logger.info("Cluster version set to " + newVersion);
+                doSetClusterVersion(newVersion);
+            } else {
+                throw new IllegalArgumentException("Illegal ClusterStateChange of type " + stateChange.getType() + ".");
             }
         } finally {
             clusterServiceLock.unlock();
@@ -240,14 +357,15 @@ public class ClusterStateManager {
         }
     }
 
-    void changeClusterState(ClusterState newState, Collection<Member> members, int partitionStateVersion, boolean isTransient) {
-        changeClusterState(newState, members, DEFAULT_TX_OPTIONS, partitionStateVersion, isTransient);
+    void changeClusterState(ClusterStateChange newState, MemberMap memberMap, int partitionStateVersion,
+            boolean isTransient) {
+        changeClusterState(newState, memberMap, DEFAULT_TX_OPTIONS, partitionStateVersion, isTransient);
     }
 
-    void changeClusterState(ClusterState newState, Collection<Member> members,
-            TransactionOptions options, int partitionStateVersion, boolean isTransient) {
+    void changeClusterState(ClusterStateChange newState, MemberMap memberMap, TransactionOptions options,
+            int partitionStateVersion, boolean isTransient) {
         checkParameters(newState, options);
-        if (getState() == newState) {
+        if (isCurrentStateEqualToRequestedOne(newState)) {
             return;
         }
 
@@ -259,23 +377,29 @@ public class ClusterStateManager {
 
         try {
             String txnId = tx.getTxnId();
+            Collection<MemberImpl> members = memberMap.getMembers();
+            int memberListVersion = memberMap.getVersion();
 
-            addTransactionRecords(newState, tx, members, partitionStateVersion, isTransient);
+            addTransactionRecords(newState, tx, members, memberListVersion, partitionStateVersion, isTransient);
 
-            lockClusterState(newState, nodeEngine, options.getTimeoutMillis(), txnId, members, partitionStateVersion);
+            lockClusterStateOnAllMembers(newState, nodeEngine, options.getTimeoutMillis(), txnId, members,
+                    memberListVersion, partitionStateVersion);
 
-            checkMemberListChange(members);
+            checkMemberListChange(memberListVersion);
 
             tx.prepare();
 
         } catch (Throwable e) {
             tx.rollback();
+            if (e instanceof TargetNotMemberException || e.getCause() instanceof MemberLeftException) {
+                throw new IllegalStateException("Cluster members changed during state change!", e);
+            }
             throw ExceptionUtil.rethrow(e);
         }
 
         try {
             tx.commit();
-        } catch (Throwable  e) {
+        } catch (Throwable e) {
             if (e instanceof TargetNotMemberException || e.getCause() instanceof MemberLeftException) {
                 // Member left while tx is being committed after prepare successful.
                 // We cannot rollback tx after this point. Cluster state change is done
@@ -288,14 +412,24 @@ public class ClusterStateManager {
         }
     }
 
-    private void lockClusterState(ClusterState newState, NodeEngineImpl nodeEngine, long leaseTime, String txnId,
-            Collection<Member> members, int partitionStateVersion) {
+    private boolean isCurrentStateEqualToRequestedOne(ClusterStateChange change) {
+        if (change.isOfType(ClusterState.class)) {
+            return getState() == change.getNewState();
+        } else if (change.isOfType(Version.class)) {
+            return clusterVersion != null && clusterVersion.equals(change.getNewState());
+        }
+        return false;
+    }
+
+    private void lockClusterStateOnAllMembers(ClusterStateChange stateChange, NodeEngineImpl nodeEngine, long leaseTime,
+            String txnId, Collection<MemberImpl> members, int memberListVersion, int partitionStateVersion) {
 
         Collection<Future> futures = new ArrayList<Future>(members.size());
 
         final Address thisAddress = node.getThisAddress();
         for (Member member : members) {
-            Operation op = new LockClusterStateOperation(newState, thisAddress, txnId, leaseTime, partitionStateVersion);
+            Operation op = new LockClusterStateOp(stateChange, thisAddress, txnId, leaseTime, memberListVersion,
+                    partitionStateVersion);
             Future future = nodeEngine.getOperationService().invokeOnTarget(SERVICE_NAME, op, member.getAddress());
             futures.add(future);
         }
@@ -305,40 +439,35 @@ public class ClusterStateManager {
         exceptionHandler.rethrowIfFailed();
     }
 
-    private void addTransactionRecords(ClusterState newState, Transaction tx,
-                                       Collection<Member> members, int partitionStateVersion, boolean isTransient) {
+    private void addTransactionRecords(ClusterStateChange stateChange, Transaction tx, Collection<MemberImpl> members,
+            int memberListVersion, int partitionStateVersion, boolean isTransient) {
         long leaseTime = Math.min(tx.getTimeoutMillis(), LOCK_LEASE_EXTENSION_MILLIS);
         for (Member member : members) {
-            tx.add(new ClusterStateTransactionLogRecord(newState, node.getThisAddress(),
-                    member.getAddress(), tx.getTxnId(), leaseTime, partitionStateVersion, isTransient));
+            tx.add(new ClusterStateTransactionLogRecord(stateChange, node.getThisAddress(),
+                    member.getAddress(), tx.getTxnId(), leaseTime, memberListVersion, partitionStateVersion, isTransient));
         }
     }
 
-    private void checkMemberListChange(Collection<Member> members) {
-        Collection<Member> currentMembers = node.getClusterService().getMembers();
-        if (members.size() != currentMembers.size()) {
-            throw new IllegalStateException("Cluster members changed during state change!");
-        }
+    private void checkMemberListChange(int initialMemberListVersion) {
+        int currentMemberListVersion = node.getClusterService().getMembershipManager().getMemberListVersion();
 
-        for (Member member : currentMembers) {
-            if (!members.contains(member)) {
-                throw new IllegalStateException("Cluster members changed during state change!");
-            }
+        if (initialMemberListVersion != currentMemberListVersion) {
+            throw new IllegalStateException("Cluster members changed during state change! "
+                    + "Initial version: " + initialMemberListVersion + ", Current version: " + currentMemberListVersion);
         }
     }
 
-    private void checkParameters(ClusterState newState, TransactionOptions options) {
+    private void checkParameters(ClusterStateChange newState, TransactionOptions options) {
         Preconditions.checkNotNull(newState);
         Preconditions.checkNotNull(options);
-        if (newState == ClusterState.IN_TRANSITION) {
-            throw new IllegalArgumentException("IN_TRANSITION is an internal state!");
-        }
+
+        newState.validate();
         if (options.getTransactionType() != TransactionType.TWO_PHASE) {
             throw new IllegalArgumentException("Changing cluster state requires 2PC transaction!");
         }
     }
 
-    String stateToString() {
+    public String stateToString() {
         return "ClusterState{state=" + state + ", lock=" + stateLockRef.get() + '}';
     }
 
@@ -371,7 +500,7 @@ public class ClusterStateManager {
 
         private void log(Throwable cause) {
             if (logger.isFineEnabled()) {
-                logger.log(Level.FINE, "failure during cluster state change", cause);
+                logger.fine("failure during cluster state change", cause);
             }
         }
 

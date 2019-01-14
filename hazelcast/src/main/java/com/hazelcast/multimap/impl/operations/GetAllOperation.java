@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,17 +20,18 @@ import com.hazelcast.concurrent.lock.LockWaitNotifyKey;
 import com.hazelcast.core.OperationTimeoutException;
 import com.hazelcast.multimap.impl.MultiMapContainer;
 import com.hazelcast.multimap.impl.MultiMapDataSerializerHook;
+import com.hazelcast.multimap.impl.MultiMapRecord;
 import com.hazelcast.multimap.impl.MultiMapService;
 import com.hazelcast.multimap.impl.MultiMapValue;
 import com.hazelcast.nio.serialization.Data;
 import com.hazelcast.spi.BlockingOperation;
-import com.hazelcast.spi.DefaultObjectNamespace;
-import com.hazelcast.spi.OperationResponseHandler;
+import com.hazelcast.spi.DistributedObjectNamespace;
+import com.hazelcast.spi.ReadonlyOperation;
 import com.hazelcast.spi.WaitNotifyKey;
 
 import java.util.Collection;
 
-public class GetAllOperation extends MultiMapKeyBasedOperation implements BlockingOperation {
+public class GetAllOperation extends AbstractKeyBasedMultiMapOperation implements BlockingOperation, ReadonlyOperation {
 
     public GetAllOperation() {
     }
@@ -43,11 +44,10 @@ public class GetAllOperation extends MultiMapKeyBasedOperation implements Blocki
     public void run() throws Exception {
         MultiMapContainer container = getOrCreateContainer();
         MultiMapValue multiMapValue = container.getMultiMapValueOrNull(dataKey);
-        Collection coll = null;
+        Collection<MultiMapRecord> coll = null;
         if (multiMapValue != null) {
             multiMapValue.incrementHit();
-            OperationResponseHandler responseHandler = getOperationResponseHandler();
-            coll = multiMapValue.getCollection(responseHandler.isLocal());
+            coll = multiMapValue.getCollection(executedLocally());
         }
         response = new MultiMapResponse(coll, getValueCollectionType(container));
     }
@@ -59,14 +59,14 @@ public class GetAllOperation extends MultiMapKeyBasedOperation implements Blocki
 
     @Override
     public WaitNotifyKey getWaitKey() {
-        return new LockWaitNotifyKey(new DefaultObjectNamespace(MultiMapService.SERVICE_NAME, name), dataKey);
+        return new LockWaitNotifyKey(new DistributedObjectNamespace(MultiMapService.SERVICE_NAME, name), dataKey);
     }
 
     @Override
     public boolean shouldWait() {
         MultiMapContainer container = getOrCreateContainer();
         if (container.isTransactionallyLocked(dataKey)) {
-            return !container.canAcquireLock(dataKey, getCallerUuid(), getThreadId());
+            return !container.canAcquireLock(dataKey, getCallerUuid(), threadId);
         }
         return false;
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +41,8 @@ public class InternalPartitionImpl implements InternalPartition {
         this.thisAddress = thisAddress;
     }
 
-    InternalPartitionImpl(int partitionId, PartitionListener listener, Address thisAddress,
+    @SuppressFBWarnings("EI_EXPOSE_REP")
+    public InternalPartitionImpl(int partitionId, PartitionListener listener, Address thisAddress,
             Address[] addresses) {
         this(partitionId, listener, thisAddress);
         this.addresses = addresses;
@@ -76,6 +77,7 @@ public class InternalPartitionImpl implements InternalPartition {
         return addresses[replicaIndex];
     }
 
+    /** Swaps the addresses for {@code index1} and {@code index2} and call the partition listeners */
     void swapAddresses(int index1, int index2) {
         Address[] newAddresses = Arrays.copyOf(addresses, MAX_REPLICA_COUNT);
 
@@ -119,6 +121,7 @@ public class InternalPartitionImpl implements InternalPartition {
         callPartitionListener(replicaIndex, oldAddress, newAddress);
     }
 
+    /** Calls the partition listener for all changed addresses. */
     private void callPartitionListener(Address[] newAddresses, Address[] oldAddresses) {
         if (partitionListener != null) {
             for (int replicaIndex = 0; replicaIndex < MAX_REPLICA_COUNT; replicaIndex++) {
@@ -129,6 +132,7 @@ public class InternalPartitionImpl implements InternalPartition {
         }
     }
 
+    /** Sends a {@link PartitionReplicaChangeEvent} if the address has changed. */
     private void callPartitionListener(int replicaIndex, Address oldAddress, Address newAddress) {
         boolean changed;
         if (oldAddress == null) {
@@ -161,6 +165,10 @@ public class InternalPartitionImpl implements InternalPartition {
         return getReplicaIndex(addresses, address);
     }
 
+    /**
+     * Returns the index of the {@code address} in {@code addresses} or -1 if the {@code address} is {@code null} or
+     * not present.
+     */
     public static int getReplicaIndex(Address[] addresses, Address address) {
         if (address == null) {
             return -1;
@@ -168,6 +176,25 @@ public class InternalPartitionImpl implements InternalPartition {
 
         for (int i = 0; i < MAX_REPLICA_COUNT; i++) {
             if (address.equals(addresses[i])) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    int replaceAddress(Address oldAddress, Address newAddress) {
+        Address[] currentAddresses = addresses;
+        for (int i = 0; i < MAX_REPLICA_COUNT; i++) {
+            Address address = currentAddresses[i];
+            if (address == null) {
+                break;
+            }
+
+            if (address.equals(oldAddress)) {
+                Address[] newAddresses = Arrays.copyOf(currentAddresses, MAX_REPLICA_COUNT);
+                newAddresses[i] = newAddress;
+                addresses = newAddresses;
+                callPartitionListener(i, oldAddress, newAddress);
                 return i;
             }
         }

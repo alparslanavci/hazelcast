@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,11 +19,12 @@ package com.hazelcast.replicatedmap.impl.record;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.Data;
-import com.hazelcast.nio.serialization.DataSerializable;
+import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
+import com.hazelcast.replicatedmap.impl.operation.ReplicatedMapDataSerializerHook;
 
 import java.io.IOException;
 
-public class RecordMigrationInfo implements DataSerializable {
+public class RecordMigrationInfo implements IdentifiedDataSerializable {
 
     private Data key;
     private Data value;
@@ -35,7 +36,6 @@ public class RecordMigrationInfo implements DataSerializable {
 
     public RecordMigrationInfo() {
     }
-
 
     public RecordMigrationInfo(Data key, Data value, long ttl) {
         this.key = key;
@@ -132,5 +132,15 @@ public class RecordMigrationInfo implements DataSerializable {
                 + ", lastUpdateTime=" + lastUpdateTime
                 + ", creationTime=" + creationTime
                 + '}';
+    }
+
+    @Override
+    public int getFactoryId() {
+        return ReplicatedMapDataSerializerHook.F_ID;
+    }
+
+    @Override
+    public int getId() {
+        return ReplicatedMapDataSerializerHook.RECORD_MIGRATION_INFO;
     }
 }

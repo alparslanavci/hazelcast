@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import com.hazelcast.query.impl.FalsePredicate;
 import com.hazelcast.query.impl.Index;
 import com.hazelcast.query.impl.Indexes;
 import com.hazelcast.util.collection.ArrayUtils;
-import com.hazelcast.util.collection.InternalMultiMap;
+import com.hazelcast.util.collection.InternalListMultiMap;
 
 import java.util.List;
 import java.util.Map;
@@ -49,14 +49,14 @@ public class BetweenVisitor extends AbstractVisitor {
     @Override
     public Predicate visit(AndPredicate andPredicate, Indexes indexes) {
         final Predicate[] originalPredicates = andPredicate.predicates;
-        InternalMultiMap<String, GreaterLessPredicate> candidates =
+        InternalListMultiMap<String, GreaterLessPredicate> candidates =
                 findCandidatesAndGroupByAttribute(originalPredicates, indexes);
 
         if (candidates == null) {
             return andPredicate;
         }
 
-        //how many predicates is eliminated
+        //how many predicates are eliminated
         int toBeRemovedCounter = 0;
         boolean modified = false;
         Predicate[] target = originalPredicates;
@@ -74,7 +74,7 @@ public class BetweenVisitor extends AbstractVisitor {
 
             if (boundaries.isOverlapping()) {
                 // the predicate is never true. imagine this: `foo >= 5 and foo <= 4`
-                // it can never be true, we can't replace the whole AND Node with FalsePredicate
+                // this expression can never be true -> we can replace the whole AND Node with FalsePredicate
 
                 // We can return FalsePredicate even if there are additional predicate
                 // as `foo >= 5 and foo <= 5 and bar = 3` is still always false. the `bar = 3` can
@@ -155,9 +155,9 @@ public class BetweenVisitor extends AbstractVisitor {
     /**
      * Find GreaterLessPredicates with equal flag set to true and group them by attribute name
      */
-    private InternalMultiMap<String, GreaterLessPredicate> findCandidatesAndGroupByAttribute(Predicate[] predicates,
-                                                                                             Indexes indexService) {
-        InternalMultiMap<String, GreaterLessPredicate> candidates = null;
+    private InternalListMultiMap<String, GreaterLessPredicate> findCandidatesAndGroupByAttribute(Predicate[] predicates,
+                                                                                                 Indexes indexService) {
+        InternalListMultiMap<String, GreaterLessPredicate> candidates = null;
         for (Predicate predicate : predicates) {
             if (!(predicate instanceof GreaterLessPredicate)) {
                 continue;
@@ -176,10 +176,10 @@ public class BetweenVisitor extends AbstractVisitor {
         return candidates;
     }
 
-    private InternalMultiMap<String, GreaterLessPredicate> addIntoCandidates(
-            GreaterLessPredicate predicate, InternalMultiMap<String, GreaterLessPredicate> currentCandidates) {
+    private InternalListMultiMap<String, GreaterLessPredicate> addIntoCandidates(
+            GreaterLessPredicate predicate, InternalListMultiMap<String, GreaterLessPredicate> currentCandidates) {
         if (currentCandidates == null) {
-            currentCandidates = new InternalMultiMap<String, GreaterLessPredicate>();
+            currentCandidates = new InternalListMultiMap<String, GreaterLessPredicate>();
         }
         String attributeName = predicate.attributeName;
         currentCandidates.put(attributeName, predicate);

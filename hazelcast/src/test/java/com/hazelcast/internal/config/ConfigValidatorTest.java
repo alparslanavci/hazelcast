@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,26 +16,53 @@
 
 package com.hazelcast.internal.config;
 
+import com.hazelcast.cache.impl.merge.policy.CacheMergePolicyProvider;
+import com.hazelcast.config.CacheSimpleConfig;
+import com.hazelcast.config.Config;
+import com.hazelcast.config.EvictionConfig;
 import com.hazelcast.config.InMemoryFormat;
 import com.hazelcast.config.MapConfig;
-import com.hazelcast.config.NearCacheConfig;
+import com.hazelcast.config.NativeMemoryConfig;
+import com.hazelcast.map.merge.MergePolicyProvider;
+import com.hazelcast.spi.NodeEngine;
+import com.hazelcast.spi.merge.SplitBrainMergePolicyProvider;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelTest;
 import com.hazelcast.test.annotation.QuickTest;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
+import org.mockito.Mockito;
 
 import static com.hazelcast.config.InMemoryFormat.BINARY;
 import static com.hazelcast.config.InMemoryFormat.NATIVE;
 import static com.hazelcast.config.InMemoryFormat.OBJECT;
+import static com.hazelcast.internal.config.ConfigValidator.checkCacheConfig;
 import static com.hazelcast.internal.config.ConfigValidator.checkMapConfig;
-import static com.hazelcast.internal.config.ConfigValidator.checkNearCacheConfig;
+import static com.hazelcast.internal.config.ConfigValidator.checkNearCacheNativeMemoryConfig;
+import static org.mockito.Mockito.when;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelTest.class})
 public class ConfigValidatorTest extends HazelcastTestSupport {
+
+    private MergePolicyProvider mapMergePolicyProvider;
+    private CacheMergePolicyProvider cacheMergePolicyProvider;
+
+    @Before
+    public void setUp() {
+        Config config = new Config();
+        NodeEngine nodeEngine = Mockito.mock(NodeEngine.class);
+        when(nodeEngine.getConfigClassLoader()).thenReturn(config.getClassLoader());
+
+        SplitBrainMergePolicyProvider splitBrainMergePolicyProvider = new SplitBrainMergePolicyProvider(nodeEngine);
+        when(nodeEngine.getSplitBrainMergePolicyProvider()).thenReturn(splitBrainMergePolicyProvider);
+
+        mapMergePolicyProvider = new MergePolicyProvider(nodeEngine);
+        cacheMergePolicyProvider = new CacheMergePolicyProvider(nodeEngine);
+    }
 
     @Test
     public void testConstructor() {
@@ -43,63 +70,39 @@ public class ConfigValidatorTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void test_checkMapConfig_BINARY() {
-        checkMapConfig(getMapConfig(BINARY));
+    public void checkMapConfig_BINARY() {
+        checkMapConfig(getMapConfig(BINARY), mapMergePolicyProvider);
     }
 
     @Test
-    public void test_checkMapConfig_OBJECT() {
-        checkMapConfig(getMapConfig(OBJECT));
+    public void checkMapConfig_OBJECT() {
+        checkMapConfig(getMapConfig(OBJECT), mapMergePolicyProvider);
     }
 
     /**
      * Not supported in open source version, so test is expected to throw exception.
      */
     @Test(expected = IllegalArgumentException.class)
-    public void test_checkMapConfig_NATIVE() {
-        checkMapConfig(getMapConfig(NATIVE));
+    public void checkMapConfig_NATIVE() {
+        checkMapConfig(getMapConfig(NATIVE), mapMergePolicyProvider);
     }
 
     @Test
     @SuppressWarnings("deprecation")
-    public void test_checkMapConfig_withIgnoredConfigMinEvictionCheckMillis() {
+    public void checkMapConfig_withIgnoredConfigMinEvictionCheckMillis() {
         MapConfig mapConfig = getMapConfig(BINARY)
                 .setMinEvictionCheckMillis(100);
-        checkMapConfig(mapConfig);
+
+        checkMapConfig(mapConfig, mapMergePolicyProvider);
     }
 
     @Test
     @SuppressWarnings("deprecation")
-    public void test_checkMapConfig_withIgnoredConfigEvictionPercentage() {
+    public void checkMapConfig_withIgnoredConfigEvictionPercentage() {
         MapConfig mapConfig = getMapConfig(BINARY)
                 .setEvictionPercentage(50);
-        checkMapConfig(mapConfig);
-    }
 
-    @Test
-    public void test_checkNearCacheConfig_BINARY() {
-        checkNearCacheConfig(getNearCacheConfig(BINARY), false);
-    }
-
-    @Test
-    public void test_checkNearCacheConfig_OBJECT() {
-        checkNearCacheConfig(getNearCacheConfig(OBJECT), false);
-    }
-
-    /**
-     * Not supported in open source version, so test is expected to throw exception.
-     */
-    @Test(expected = IllegalArgumentException.class)
-    public void test_checkNearCacheConfig_NATIVE() {
-        checkNearCacheConfig(getNearCacheConfig(NATIVE), false);
-    }
-
-    /**
-     * Not supported client configuration, so test is expected to throw exception.
-     */
-    @Test(expected = IllegalArgumentException.class)
-    public void test_checkNearCacheConfig_withUnsupportedClientConfig() {
-        checkNearCacheConfig(getNearCacheConfig(BINARY), true);
+        checkMapConfig(mapConfig, mapMergePolicyProvider);
     }
 
     private MapConfig getMapConfig(InMemoryFormat inMemoryFormat) {
@@ -107,9 +110,53 @@ public class ConfigValidatorTest extends HazelcastTestSupport {
                 .setInMemoryFormat(inMemoryFormat);
     }
 
-    private NearCacheConfig getNearCacheConfig(InMemoryFormat inMemoryFormat) {
-        return new NearCacheConfig()
-                .setInMemoryFormat(inMemoryFormat)
-                .setCacheLocalEntries(true);
+    @Test
+    public void checkCacheConfig_withEntryCountMaxSizePolicy_OBJECT() {
+        EvictionConfig evictionConfig = new EvictionConfig()
+                .setMaximumSizePolicy(EvictionConfig.MaxSizePolicy.ENTRY_COUNT);
+        CacheSimpleConfig cacheSimpleConfig = new CacheSimpleConfig()
+                .setInMemoryFormat(OBJECT)
+                .setEvictionConfig(evictionConfig);
+
+        checkCacheConfig(cacheSimpleConfig, cacheMergePolicyProvider);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void checkCacheConfig_withEntryCountMaxSizePolicy_NATIVE() {
+        EvictionConfig evictionConfig = new EvictionConfig()
+                .setMaximumSizePolicy(EvictionConfig.MaxSizePolicy.ENTRY_COUNT);
+        CacheSimpleConfig cacheSimpleConfig = new CacheSimpleConfig()
+                .setInMemoryFormat(NATIVE)
+                .setEvictionConfig(evictionConfig);
+
+        checkCacheConfig(cacheSimpleConfig, cacheMergePolicyProvider);
+    }
+
+    @Test
+    public void checkNearCacheNativeMemoryConfig_shouldNotNeedNativeMemoryConfig_BINARY_onOS() {
+        checkNearCacheNativeMemoryConfig(BINARY, null, false);
+    }
+
+    @Test
+    public void checkNearCacheNativeMemoryConfig_shouldNotNeedNativeMemoryConfig_BINARY_onEE() {
+        checkNearCacheNativeMemoryConfig(BINARY, null, true);
+    }
+
+    @Test
+    public void checkNearCacheNativeMemoryConfig_shouldNotThrowExceptionWithoutNativeMemoryConfig_NATIVE_onOS() {
+        checkNearCacheNativeMemoryConfig(NATIVE, null, false);
+    }
+
+    @Test
+    public void checkNearCacheNativeMemoryConfig_shouldNotThrowExceptionWithNativeMemoryConfig_NATIVE_onEE() {
+        NativeMemoryConfig nativeMemoryConfig = new NativeMemoryConfig()
+                .setEnabled(true);
+
+        checkNearCacheNativeMemoryConfig(NATIVE, nativeMemoryConfig, true);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void checkNearCacheNativeMemoryConfig_shouldThrowExceptionWithoutNativeMemoryConfig_NATIVE_onEE() {
+        checkNearCacheNativeMemoryConfig(NATIVE, null, true);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2018, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.nio.Bits;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.Data;
+import com.hazelcast.spi.serialization.SerializationService;
 
 import java.io.Closeable;
 import java.io.DataOutputStream;
@@ -29,7 +30,8 @@ import java.nio.ByteOrder;
 
 import static com.hazelcast.nio.Bits.NULL_ARRAY_LENGTH;
 
-public class ObjectDataOutputStream extends OutputStream implements ObjectDataOutput, Closeable {
+@SuppressWarnings("checkstyle:methodcount")
+public class ObjectDataOutputStream extends VersionedObjectDataOutput implements ObjectDataOutput, Closeable {
 
     private final InternalSerializationService serializationService;
     private final DataOutputStream dataOut;
@@ -258,6 +260,11 @@ public class ObjectDataOutputStream extends OutputStream implements ObjectDataOu
 
     @Override
     public byte[] toByteArray() {
+        return toByteArray(0);
+    }
+
+    @Override
+    public byte[] toByteArray(int padding) {
         throw new UnsupportedOperationException();
     }
 
@@ -274,6 +281,11 @@ public class ObjectDataOutputStream extends OutputStream implements ObjectDataOu
     @Override
     public ByteOrder getByteOrder() {
         return byteOrder;
+    }
+
+    @Override
+    public SerializationService getSerializationService() {
+        return serializationService;
     }
 
     private boolean bigEndian() {
